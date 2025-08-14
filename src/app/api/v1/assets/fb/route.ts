@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getAuthenticatedUser, getOrCreateDefaultOrg, checkOrgAccess } from '@/lib/auth-helpers'
 import { scrapeFacebookAd, validateFacebookAdUrl, calculateRuntimeDays } from '@/lib/facebook-scraper'
-import { uploadImageFromUrl, uploadVideoFromUrl } from '@/lib/cloudinary'
 import { prisma } from '@/lib/prisma'
 
 const createAssetSchema = z.object({
@@ -58,32 +57,60 @@ export async function POST(req: NextRequest) {
         })
 
         if (existingAsset) {
-            // If boardId is specified and asset isn't on that board, add it
-            if (boardId && !existingAsset.boards.some(ba => ba.boardId === boardId)) {
+            // Check if this ad is already on the specified board
+            const isAlreadyOnBoard = boardId && existingAsset.boards.some(ba => ba.boardId === boardId)
+
+            if (boardId && !isAlreadyOnBoard) {
+                // Add to the specified board
                 await prisma.boardAsset.create({
                     data: {
                         boardId,
                         assetId: existingAsset.id
                     }
                 })
-            }
 
-            return NextResponse.json({
-                id: existingAsset.id,
-                fbAdId: existingAsset.fbAdId,
-                brandName: existingAsset.brandName,
-                headline: existingAsset.headline,
-                cta: existingAsset.cta,
-                media: existingAsset.files.map(f => ({ url: f.url, type: f.type })),
-                boardId: boardId || existingAsset.boards[0]?.boardId,
-                message: 'Asset already exists'
-            })
+                return NextResponse.json({
+                    id: existingAsset.id,
+                    fbAdId: existingAsset.fbAdId,
+                    fbPageId: existingAsset.fbPageId,
+                    brandName: existingAsset.brandName,
+                    headline: existingAsset.headline,
+                    cta: existingAsset.cta,
+                    adText: existingAsset.adText,
+                    description: existingAsset.description,
+                    adUrl: existingAsset.adUrl,
+                    media: existingAsset.files.map(f => ({ url: f.url, type: f.type })),
+                    boardId: boardId,
+                    runtimeDays: existingAsset.runtimeDays,
+                    firstSeenDate: existingAsset.firstSeenDate,
+                    lastSeenDate: existingAsset.lastSeenDate,
+                    message: 'Ad added to board successfully!'
+                })
+            } else if (isAlreadyOnBoard) {
+                // Ad already exists on this board
+                console.log('Returning 409 - Ad already on board')
+                const errorResponse = {
+                    error: 'This ad is already in this board',
+                    details: 'This Facebook ad has already been added to this board.'
+                }
+                console.log('Error response object:', errorResponse)
+                return NextResponse.json(errorResponse, { status: 409 }) // 409 Conflict
+            } else {
+                // No board specified, ad exists elsewhere
+                console.log('Returning 409 - Ad already exists')
+                const errorResponse = {
+                    error: 'Ad already exists',
+                    details: 'This Facebook ad has already been saved to your organization.'
+                }
+                console.log('Error response object:', errorResponse)
+                return NextResponse.json(errorResponse, { status: 409 }) // 409 Conflict
+            }
         }
 
         // Scrape Facebook ad data
         const adData = await scrapeFacebookAd(adUrl)
 
-        // Create asset record
+        // Create asset record with scraped data
         const asset = await prisma.asset.create({
             data: {
                 platform: 'facebook',
@@ -103,36 +130,24 @@ export async function POST(req: NextRequest) {
             }
         })
 
-        // Upload media files to Cloudinary
+        // For now, store media URLs directly without Cloudinary upload
+        // (Cloudinary integration comes next)
         const uploadedFiles = []
-        for (let i = 0; i < adData.mediaUrls.length; i++) {
-            const mediaUrl = adData.mediaUrls[i]
-            try {
-                const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('video')
-                let uploadResult
-
-                if (isVideo) {
-                    uploadResult = await uploadVideoFromUrl(mediaUrl, {
-                        orgId,
-                        assetId: asset.id
-                    })
-                } else {
-                    uploadResult = await uploadImageFromUrl(mediaUrl, {
-                        orgId,
-                        assetId: asset.id
-                    })
-                }
+        if (adData.mediaUrls.length > 0) {
+            for (let i = 0; i < adData.mediaUrls.length; i++) {
+                const mediaUrl = adData.mediaUrls[i]
+                const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('video') || mediaUrl.includes('fbcdn') && mediaUrl.includes('v/')
 
                 const assetFile = await prisma.assetFile.create({
                     data: {
                         assetId: asset.id,
                         type: isVideo ? 'video' : 'image',
-                        url: uploadResult.secure_url,
-                        cloudinaryId: uploadResult.public_id,
-                        width: uploadResult.width,
-                        height: uploadResult.height,
-                        fileSize: uploadResult.bytes,
-                        duration: uploadResult.duration,
+                        url: mediaUrl,
+                        cloudinaryId: `temp_${asset.id}_${i}`, // Temp ID until Cloudinary upload
+                        width: null,
+                        height: null,
+                        fileSize: null,
+                        duration: null,
                         order: i
                     }
                 })
@@ -141,9 +156,6 @@ export async function POST(req: NextRequest) {
                     url: assetFile.url,
                     type: assetFile.type
                 })
-            } catch (error) {
-                console.error(`Failed to upload media ${mediaUrl}:`, error)
-                // Continue with other files even if one fails
             }
         }
 
@@ -224,7 +236,7 @@ export async function POST(req: NextRequest) {
                 orgId,
                 metadata: {
                     platform: 'facebook',
-                    fbAdId: adData.fbAdId,
+                    fbAdId: adId,
                     source: 'api'
                 }
             }
@@ -233,11 +245,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
             id: asset.id,
             fbAdId: asset.fbAdId,
+            fbPageId: asset.fbPageId,
             brandName: asset.brandName,
             headline: asset.headline,
             cta: asset.cta,
+            adText: asset.adText,
+            description: asset.description,
+            adUrl: asset.adUrl,
             media: uploadedFiles,
-            boardId: targetBoardId
+            boardId: targetBoardId,
+            runtimeDays: asset.runtimeDays,
+            firstSeenDate: asset.firstSeenDate,
+            lastSeenDate: asset.lastSeenDate
         })
 
     } catch (error) {
