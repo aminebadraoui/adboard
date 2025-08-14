@@ -13,12 +13,13 @@ import {
     Plus,
     ChevronDown,
     ChevronRight,
-    Settings
+    Settings,
+    Folder
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { name: 'My Boards', href: '/dashboard', icon: Folder },
     { name: 'All Ads', href: '/dashboard/ads', icon: Layers },
     { name: 'Tags', href: '/dashboard/tags', icon: Tag },
     { name: 'Shared Links', href: '/dashboard/shared', icon: Share2 },
