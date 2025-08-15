@@ -10,7 +10,8 @@ import {
     Heart,
     Eye,
     Tag as TagIcon,
-    Trash2
+    Trash2,
+    Play
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -33,10 +34,29 @@ interface BoardGridProps {
 export function BoardGrid({ board }: BoardGridProps) {
     const [selectedAd, setSelectedAd] = useState<string | null>(null)
     const [deletingAsset, setDeletingAsset] = useState<string | null>(null)
+    const [expandedAdText, setExpandedAdText] = useState<Set<string>>(new Set())
     const router = useRouter()
 
     const openAdPreview = (assetId: string) => {
         setSelectedAd(assetId)
+    }
+
+    const toggleAdTextExpansion = (assetId: string) => {
+        const newExpanded = new Set(expandedAdText)
+        if (newExpanded.has(assetId)) {
+            newExpanded.delete(assetId)
+        } else {
+            newExpanded.add(assetId)
+        }
+        setExpandedAdText(newExpanded)
+    }
+
+    const handleVideoPlay = (asset: Asset) => {
+        const videoFile = asset.files.find(f => f.type === 'video')
+        if (videoFile) {
+            // Open video in a new tab or play in modal
+            window.open(videoFile.url, '_blank')
+        }
     }
 
     const handleDeleteAsset = async (assetId: string) => {
@@ -71,7 +91,11 @@ export function BoardGrid({ board }: BoardGridProps) {
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {board.assets.map((boardAsset) => {
                     const asset = boardAsset.asset
-                    const primaryImage = asset.files.find(f => f.type === 'image') || asset.files[0]
+
+                    // Prioritize video_poster for thumbnail display, then any image, then first file
+                    const videoPoster = asset.files.find(f => f.type === 'image' && f.cloudinaryId?.includes('video_poster'))
+                    const primaryImage = videoPoster || asset.files.find(f => f.type === 'image') || asset.files[0]
+                    const hasVideo = asset.files.some(f => f.type === 'video')
 
                     return (
                         <div
@@ -79,15 +103,28 @@ export function BoardGrid({ board }: BoardGridProps) {
                             className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
                         >
                             {/* Ad Preview */}
-                            <div className="aspect-square bg-gray-100 relative overflow-hidden">
+                            <div
+                                className="aspect-square bg-gray-100 relative overflow-hidden cursor-pointer"
+                                onClick={() => hasVideo ? handleVideoPlay(asset) : openAdPreview(asset.id)}
+                            >
                                 {primaryImage ? (
-                                    <Image
-                                        src={primaryImage.url}
-                                        alt={asset.headline || 'Facebook Ad'}
-                                        fill
-                                        className="object-cover group-hover:scale-105 transition-transform duration-200"
-                                        sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
-                                    />
+                                    <>
+                                        <Image
+                                            src={primaryImage.url}
+                                            alt={asset.headline || 'Facebook Ad'}
+                                            fill
+                                            className="object-cover group-hover:scale-105 transition-transform duration-200"
+                                            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                                        />
+                                        {/* Video Play Button Overlay */}
+                                        {hasVideo && (
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <div className="bg-black bg-opacity-60 rounded-full p-3 group-hover:bg-opacity-80 transition-all">
+                                                    <Play className="w-8 h-8 text-white fill-current" />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center">
                                         <div className="text-center">
@@ -99,25 +136,13 @@ export function BoardGrid({ board }: BoardGridProps) {
                                     </div>
                                 )}
 
-                                {/* Overlay Actions */}
-                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200">
-                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <Button
-                                            variant="secondary"
-                                            size="sm"
-                                            onClick={() => openAdPreview(asset.id)}
-                                            className="h-8 w-8 p-0"
-                                        >
-                                            <Eye className="w-4 h-4" />
-                                        </Button>
-                                    </div>
-                                </div>
+
                             </div>
 
                             {/* Ad Info */}
                             <div className="p-4">
                                 <div className="flex items-start justify-between mb-2">
-                                    <h3 className="font-medium text-gray-900 text-sm line-clamp-2 flex-1">
+                                    <h3 className="font-medium text-gray-900 text-sm flex-1">
                                         {asset.headline || asset.adText?.split('.')[0] || 'Untitled Ad'}
                                     </h3>
                                     <div className="flex items-center gap-1 ml-2">
@@ -147,6 +172,41 @@ export function BoardGrid({ board }: BoardGridProps) {
                                     <p className="text-xs text-gray-600 mb-3 line-clamp-2">
                                         {asset.description}
                                     </p>
+                                )}
+
+                                {/* Ad Text */}
+                                {asset.adText && (
+                                    <div className="mb-3">
+                                        <div className="text-xs font-medium text-gray-700 mb-1">Ad Text:</div>
+                                        <div className="text-xs text-gray-600">
+                                            {(() => {
+                                                const isExpanded = expandedAdText.has(asset.id)
+                                                const shouldTruncate = asset.adText.length > 150
+                                                const displayText = shouldTruncate && !isExpanded
+                                                    ? asset.adText.substring(0, 150) + '...'
+                                                    : asset.adText
+
+                                                return (
+                                                    <>
+                                                        <div className="whitespace-pre-wrap">
+                                                            {displayText}
+                                                        </div>
+                                                        {shouldTruncate && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    toggleAdTextExpansion(asset.id)
+                                                                }}
+                                                                className="text-blue-600 hover:text-blue-800 font-medium mt-1"
+                                                            >
+                                                                {isExpanded ? 'Show less' : 'Show more'}
+                                                            </button>
+                                                        )}
+                                                    </>
+                                                )
+                                            })()}
+                                        </div>
+                                    </div>
                                 )}
 
                                 {/* Tags */}

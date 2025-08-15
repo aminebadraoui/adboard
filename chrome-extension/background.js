@@ -92,8 +92,8 @@ async function loadBoards() {
     return data
 }
 
-async function saveAd({ adUrl, pageId, boardId, adData }) {
-    console.log('🎯 Background: Saving ad:', { adUrl, pageId, boardId })
+async function saveAd({ boardIds, pageId, tags, adData }) {
+    console.log('🎯 Background: Saving ad to boards:', boardIds)
     console.log('🎯 Background: Ad data:', adData)
 
     // Get ALL cookies and find session cookie
@@ -130,9 +130,9 @@ async function saveAd({ adUrl, pageId, boardId, adData }) {
             'Cookie': cookieHeader,
         },
         body: JSON.stringify({
-            adUrl,
+            boardIds,
             pageId,
-            boardId,
+            tags,
             adData
         })
     })

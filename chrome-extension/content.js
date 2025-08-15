@@ -84,16 +84,22 @@ class AdBoardSaver {
 
         console.log(`✅ AdBoard: Found ${potentialAdCards.length} unique ad cards`)
 
-        // For now, just log them. In next iteration we'll inject buttons
+        // Log detected ads and inject save buttons
         potentialAdCards.forEach((card, index) => {
             console.log(`📝 Ad Card ${index + 1}:`, {
                 libraryId: card.libraryId,
                 brandName: card.brandName,
                 adTextLength: card.adText.length,
-                adTextPreview: card.adText.substring(0, 100) + (card.adText.length > 100 ? '...' : ''),
-                mediaUrls: card.mediaUrls.slice(0, 3), // First 3 media URLs
-                mediaCount: card.mediaUrls.length
+                adText: card.adText,
+                mediaCount: card.mediaDetails.length,
+                mediaTypes: card.mediaDetails.map(m => `${m.type}(${m.source})`).join(', '),
+                mainMediaUrl: card.mediaDetails[0]?.url || 'none',
+                hasSponsored: card.hasSponsored,
+                hasSeeAdDetails: card.hasSeeAdDetails
             })
+
+            // Inject save button for this ad card
+            this.injectSaveButton(card)
         })
 
         return potentialAdCards
@@ -207,9 +213,6 @@ class AdBoardSaver {
             }
         })
 
-        // Extract just the URLs for backward compatibility
-        const mediaUrlList = mediaUrls.map(media => media.url)
-
         // Check for various elements
         const hasImages = images.length > 0
         const hasVideos = videos.length > 0
@@ -222,8 +225,7 @@ class AdBoardSaver {
             container,
             brandName,
             adText,
-            mediaUrls: mediaUrlList,
-            mediaDetails: mediaUrls, // Keep detailed info for debugging
+            mediaDetails: mediaUrls,
             hasImages,
             hasVideos,
             hasButtons,
@@ -237,14 +239,329 @@ class AdBoardSaver {
             brandName,
             adTextLength: adText.length,
             adText: adText,
-            mediaCount: mediaUrlList.length,
+            mediaCount: mediaUrls.length,
             mediaTypes: mediaUrls.map(m => `${m.type}(${m.source})`).join(', '),
-            mainMediaUrl: mediaUrlList[0] || 'none',
+            mainMediaUrl: mediaUrls[0]?.url || 'none',
             hasSponsored,
             hasSeeAdDetails
         })
 
         return result
+    }
+
+    injectSaveButton(adCard) {
+        const container = adCard.container
+        const libraryId = adCard.libraryId
+
+        // Check if save button already exists
+        if (container.querySelector('.adboard-save-btn')) {
+            return
+        }
+
+        // Find the "See ad details" or "See summary details" button
+        let targetButton = null
+        const buttons = container.querySelectorAll('[role="button"]')
+        for (const btn of buttons) {
+            const text = btn.textContent || ''
+            if (text.includes('See ad details') || text.includes('See summary details')) {
+                targetButton = btn
+                break
+            }
+        }
+
+        if (!targetButton) {
+            console.log('⚠️ Could not find "See ad details" button for ad:', libraryId)
+            return
+        }
+
+        // Create save button container
+        const saveButtonContainer = document.createElement('div')
+        saveButtonContainer.style.cssText = `
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        `
+
+        // Create single AdBoard save button
+        const saveButton = document.createElement('button')
+        saveButton.className = 'adboard-save-btn'
+        saveButton.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+            </svg>
+            Add to AdBoard
+        `
+        saveButton.style.cssText = `
+            background: #1877f2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.2s;
+        `
+
+        // Add hover effects
+        saveButton.addEventListener('mouseenter', () => {
+            saveButton.style.backgroundColor = '#166fe5'
+        })
+        saveButton.addEventListener('mouseleave', () => {
+            saveButton.style.backgroundColor = '#1877f2'
+        })
+
+        // Add click handler - opens multi-board dialog by default
+        saveButton.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            this.showMultiBoardDialog(adCard)
+        })
+
+        // Add button to container
+        saveButtonContainer.appendChild(saveButton)
+
+        // Insert after the target button's parent container
+        const insertionPoint = targetButton.closest('div[role="none"]') || targetButton.parentElement
+        insertionPoint.parentElement.insertBefore(saveButtonContainer, insertionPoint.nextSibling)
+
+        console.log(`💾 Injected save buttons for ad: ${libraryId}`)
+    }
+
+
+
+    async showMultiBoardDialog(adCard) {
+        // Create modal overlay
+        const overlay = document.createElement('div')
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `
+
+        // Create dialog
+        const dialog = document.createElement('div')
+        dialog.style.cssText = `
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            min-width: 450px;
+            max-width: 600px;
+            max-height: 70vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        `
+
+        // Load boards
+        const boards = await this.loadBoards()
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600;">Save to Multiple Boards</h3>
+            <div style="margin-bottom: 16px;">
+                <strong>${adCard.brandName}</strong>
+                <div style="font-size: 14px; color: #666; margin-top: 4px;">
+                    ${adCard.adText.substring(0, 100)}${adCard.adText.length > 100 ? '...' : ''}
+                </div>
+                    </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 600;">Select Boards:</label>
+                <div id="boardCheckboxes" style="max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 12px; border-radius: 4px;">
+                    ${boards.map(board => `
+                        <label style="display: block; margin-bottom: 8px; cursor: pointer;">
+                            <input type="checkbox" value="${board.id}" style="margin-right: 8px;">
+                            ${board.name}
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button id="cancelBtn" style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button id="saveBtn" style="padding: 8px 16px; background: #42b883; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Save to Selected Boards</button>
+            </div>
+        `
+
+        overlay.appendChild(dialog)
+        document.body.appendChild(overlay)
+
+        // Handle buttons
+        dialog.querySelector('#cancelBtn').addEventListener('click', () => {
+            overlay.remove()
+        })
+
+        dialog.querySelector('#saveBtn').addEventListener('click', async () => {
+            const selectedCheckboxes = dialog.querySelectorAll('#boardCheckboxes input[type="checkbox"]:checked')
+            const selectedBoardIds = Array.from(selectedCheckboxes).map(cb => cb.value)
+
+            if (selectedBoardIds.length === 0) {
+                alert('Please select at least one board')
+                return
+            }
+
+            // Save to all boards in one API call
+            await this.saveAdToMultipleBoards(adCard, selectedBoardIds)
+            overlay.remove()
+        })
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove()
+        })
+    }
+
+    async loadBoards() {
+        try {
+            console.log('🔄 Loading boards from background script...')
+            const response = await chrome.runtime.sendMessage({
+                type: 'LOAD_BOARDS'
+            })
+            console.log('📋 Background script response:', response)
+
+            // Check response structure carefully
+            console.log('🔍 Raw response structure:', {
+                hasResponse: !!response,
+                responseKeys: response ? Object.keys(response) : 'none',
+                hasSuccess: response?.success,
+                hasData: !!response?.data,
+                dataKeys: response?.data ? Object.keys(response.data) : 'none',
+                hasBoards: !!response?.data?.boards,
+                boardsLength: response?.data?.boards?.length,
+                firstBoard: response?.data?.boards?.[0]
+            })
+
+            if (response?.success && response?.data?.boards) {
+                console.log(`✅ Loaded ${response.data.boards.length} real boards:`, response.data.boards)
+                return response.data.boards
+            } else if (response?.data?.boards) {
+                console.log(`✅ Loaded ${response.data.boards.length} boards (no success flag):`, response.data.boards)
+                return response.data.boards
+            } else {
+                console.error('❌ Invalid response format. Expected boards array but got:', response)
+                throw new Error('Invalid response format from background script')
+            }
+        } catch (error) {
+            console.error('❌ Error loading boards:', error)
+            // Don't return dummy boards - let the user see the real error
+            throw error
+        }
+    }
+
+    async saveAdToBoard(adCard, boardId) {
+        try {
+            const requestData = {
+                boardIds: [boardId], // Send as array
+                adData: {
+                    fbAdId: adCard.libraryId,
+                    brandName: adCard.brandName,
+                    headline: adCard.adText.substring(0, 100),
+                    adText: adCard.adText,
+                    description: '',
+                    cta: '',
+                    mediaDetails: adCard.mediaDetails,
+                    firstSeenDate: new Date().toISOString(),
+                    lastSeenDate: new Date().toISOString()
+                }
+            }
+
+            console.log('💾 Saving ad to board:', boardId, 'with data:', requestData)
+
+            const response = await chrome.runtime.sendMessage({
+                type: 'SAVE_AD',
+                data: requestData
+            })
+
+            if (response.success) {
+                this.showSuccessMessage('Ad saved successfully!')
+            } else {
+                console.error('Error saving ad:', response.error)
+                alert('Error saving ad: ' + response.error)
+            }
+        } catch (error) {
+            console.error('Error saving ad:', error)
+            alert('Error saving ad: ' + error.message)
+        }
+    }
+
+    async saveAdToMultipleBoards(adCard, boardIds) {
+        try {
+            const requestData = {
+                boardIds: boardIds, // Send all selected board IDs
+                adData: {
+                    fbAdId: adCard.libraryId,
+                    brandName: adCard.brandName,
+                    headline: adCard.adText.substring(0, 100),
+                    adText: adCard.adText,
+                    description: '',
+                    cta: '',
+                    mediaDetails: adCard.mediaDetails,
+                    firstSeenDate: new Date().toISOString(),
+                    lastSeenDate: new Date().toISOString()
+                }
+            }
+
+            console.log('💾 Saving ad to multiple boards:', boardIds, 'with data:', requestData)
+
+            const response = await chrome.runtime.sendMessage({
+                type: 'SAVE_AD',
+                data: requestData
+            })
+
+            if (response.success) {
+                this.showSuccessMessage(`Ad saved to ${boardIds.length} board(s) successfully!`)
+            } else {
+                console.error('Error saving ad:', response.error)
+                alert('Error saving ad: ' + response.error)
+            }
+        } catch (error) {
+            console.error('Error saving ad:', error)
+            alert('Error saving ad: ' + error.message)
+        }
+    }
+
+    showSuccessMessage(message) {
+        const notification = document.createElement('div')
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #4CAF50;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10001;
+            font-weight: 600;
+            animation: slideIn 0.3s ease-out;
+        `
+        notification.textContent = message
+
+        // Add animation
+        const style = document.createElement('style')
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+        `
+        document.head.appendChild(style)
+
+        document.body.appendChild(notification)
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            notification.remove()
+            style.remove()
+        }, 3000)
     }
 
     observeNewAds() {

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getAuthenticatedUser, getOrCreateDefaultOrg, checkOrgAccess } from '@/lib/auth-helpers'
 // Use the working API endpoint approach instead
 import { validateFacebookAdUrl, calculateRuntimeDays } from '@/lib/facebook-scraper'
+import { uploadImageFromUrl, uploadVideoFromUrl, cloudinary } from '@/lib/cloudinary'
 import { prisma } from '@/lib/prisma'
 
 // OPTIONS handler for CORS preflight
@@ -22,8 +23,7 @@ export async function OPTIONS(request: NextRequest) {
 }
 
 const createAssetSchema = z.object({
-    adUrl: z.string().url(),
-    boardId: z.string().optional(),
+    boardIds: z.array(z.string()).min(1, "At least one board ID is required"),
     pageId: z.string().optional(),
     tags: z.array(z.string()).optional().default([]),
     // Ad data extracted by Chrome extension
@@ -34,7 +34,12 @@ const createAssetSchema = z.object({
         adText: z.string().optional(),
         description: z.string().optional(),
         cta: z.string().optional(),
-        mediaUrls: z.array(z.string()).optional().default([]),
+        mediaDetails: z.array(z.object({
+            url: z.string(),
+            type: z.enum(['image', 'video']),
+            source: z.string(), // e.g., 'video_src', 'video_poster', 'main_image'
+            alt: z.string().optional(),
+        })).optional().default([]),
         firstSeenDate: z.string().optional(), // ISO date string
         lastSeenDate: z.string().optional(), // ISO date string
     }),
@@ -81,18 +86,45 @@ export async function POST(req: NextRequest) {
         // Parse request body
         const body = await req.json()
         console.log('🚨 Request body:', body)
-        const { adUrl, boardId, pageId, tags, adData } = createAssetSchema.parse(body)
-        console.log('🚨 Parsed data - adUrl:', adUrl, 'boardId:', boardId, 'pageId:', pageId)
+        const { boardIds, pageId, tags, adData } = createAssetSchema.parse(body)
+        console.log('🚨 Parsed data - boardIds:', boardIds, 'pageId:', pageId)
         console.log('🎯 Received ad data:', adData)
 
-        // Validate Facebook ad URL
-        const { isValid, adId } = validateFacebookAdUrl(adUrl)
-        if (!isValid || !adId) {
-            return NextResponse.json({ error: 'Invalid Facebook ad URL' }, { status: 400 })
+        // Get or create default organization first
+        const orgId = await getOrCreateDefaultOrg(userId)
+        console.log('🚨 User org ID:', orgId)
+
+        // SECURITY: Validate that all boardIds belong to the user's organization
+        if (boardIds.length > 0) {
+            const validBoards = await prisma.board.findMany({
+                where: {
+                    id: { in: boardIds },
+                    orgId: orgId
+                },
+                select: { id: true }
+            })
+
+            const validBoardIds = validBoards.map(b => b.id)
+            const invalidBoardIds = boardIds.filter(id => !validBoardIds.includes(id))
+
+            if (invalidBoardIds.length > 0) {
+                console.error('🚨 Invalid board IDs detected:', invalidBoardIds)
+                return NextResponse.json(
+                    {
+                        error: 'Invalid board access',
+                        details: 'One or more boards do not exist or you do not have access to them.',
+                        invalidBoardIds
+                    },
+                    { status: 403 }
+                )
+            }
+
+            console.log('✅ All board IDs validated for org:', orgId)
         }
 
-        // Get or create default organization
-        const orgId = await getOrCreateDefaultOrg(userId)
+        // Use fbAdId from the extracted adData
+        const adId = adData.fbAdId
+        console.log('✅ Using Facebook ad ID from extension:', adId)
 
         // Check if asset already exists for this org
         console.log('🚨 Checking if asset already exists for adId:', adId, 'orgId:', orgId)
@@ -127,17 +159,46 @@ export async function POST(req: NextRequest) {
                 description: existingAsset.description
             })
 
-            // Check if this ad is already on the specified board
-            const isAlreadyOnBoard = boardId && existingAsset.boards.some(ba => ba.boardId === boardId)
-            console.log('🚨 Is already on board?', isAlreadyOnBoard)
+            // Check which boards this ad is already on
+            const existingBoardIds = existingAsset.boards.map(ba => ba.boardId)
 
-            if (boardId && !isAlreadyOnBoard) {
-                // Add to the specified board
-                await prisma.boardAsset.create({
-                    data: {
-                        boardId,
-                        assetId: existingAsset.id
-                    }
+            // SECURITY: Validate that all new boardIds belong to user's organization
+            const validBoards = await prisma.board.findMany({
+                where: {
+                    id: { in: boardIds },
+                    orgId: orgId
+                },
+                select: { id: true }
+            })
+
+            const validBoardIds = validBoards.map(b => b.id)
+            const invalidBoardIds = boardIds.filter(id => !validBoardIds.includes(id))
+
+            if (invalidBoardIds.length > 0) {
+                console.error('🚨 Invalid board IDs for existing asset:', invalidBoardIds)
+                return NextResponse.json(
+                    {
+                        error: 'Invalid board access',
+                        details: 'One or more boards do not exist or you do not have access to them.',
+                        invalidBoardIds
+                    },
+                    { status: 403 }
+                )
+            }
+
+            const newBoardIds = validBoardIds.filter(boardId => !existingBoardIds.includes(boardId))
+            console.log('🚨 Existing boards:', existingBoardIds)
+            console.log('🚨 New boards to add:', newBoardIds)
+
+            if (newBoardIds.length > 0) {
+                // Add to the new boards
+                const boardAssetCreations = newBoardIds.map(boardId => ({
+                    boardId,
+                    assetId: existingAsset.id
+                }))
+
+                await prisma.boardAsset.createMany({
+                    data: boardAssetCreations
                 })
 
                 return NextResponse.json({
@@ -149,29 +210,19 @@ export async function POST(req: NextRequest) {
                     cta: existingAsset.cta,
                     adText: existingAsset.adText,
                     description: existingAsset.description,
-                    adUrl: existingAsset.adUrl,
                     media: existingAsset.files.map(f => ({ url: f.url, type: f.type })),
-                    boardId: boardId,
+                    boardIds: [...existingBoardIds, ...newBoardIds],
                     runtimeDays: existingAsset.runtimeDays,
                     firstSeenDate: existingAsset.firstSeenDate,
                     lastSeenDate: existingAsset.lastSeenDate,
-                    message: 'Ad added to board successfully!'
+                    message: `Ad added to ${newBoardIds.length} new board(s) successfully!`
                 })
-            } else if (isAlreadyOnBoard) {
-                // Ad already exists on this board
-                console.log('Returning 409 - Ad already on board')
-                const errorResponse = {
-                    error: 'This ad is already in this board',
-                    details: 'This Facebook ad has already been added to this board.'
-                }
-                console.log('Error response object:', errorResponse)
-                return NextResponse.json(errorResponse, { status: 409 }) // 409 Conflict
             } else {
-                // No board specified, ad exists elsewhere
-                console.log('Returning 409 - Ad already exists')
+                // Ad already exists on all specified boards
+                console.log('Returning 409 - Ad already on all specified boards')
                 const errorResponse = {
-                    error: 'Ad already exists',
-                    details: 'This Facebook ad has already been saved to your organization.'
+                    error: 'Ad already exists on all specified boards',
+                    details: 'This Facebook ad has already been added to all the specified boards.'
                 }
                 console.log('Error response object:', errorResponse)
                 return NextResponse.json(errorResponse, { status: 409 }) // 409 Conflict
@@ -188,12 +239,12 @@ export async function POST(req: NextRequest) {
             adText: adData.adText || '',
             description: adData.description || '',
             cta: adData.cta || '',
-            adUrl: adUrl, // Use the original Facebook URL
-            originalUrl: adUrl,
+            adUrl: `https://www.facebook.com/ads/library/?id=${adData.fbAdId}`, // Construct URL from fbAdId
+            originalUrl: `https://www.facebook.com/ads/library/?id=${adData.fbAdId}`,
             firstSeenDate: adData.firstSeenDate ? new Date(adData.firstSeenDate) : undefined,
             lastSeenDate: adData.lastSeenDate ? new Date(adData.lastSeenDate) : undefined,
             fbPageId: pageId || '',
-            mediaUrls: adData.mediaUrls || []
+            mediaDetails: adData.mediaDetails || []
         }
 
         console.log('🎯 ASSETS/FB: Processed ad data:', {
@@ -223,38 +274,89 @@ export async function POST(req: NextRequest) {
             }
         })
 
-        // For now, store media URLs directly without Cloudinary upload
-        // (Cloudinary integration comes next)
+        // Upload media files to Cloudinary using rich media details from Chrome extension
         const uploadedFiles = []
-        if (processedAdData.mediaUrls.length > 0) {
-            for (let i = 0; i < processedAdData.mediaUrls.length; i++) {
-                const mediaUrl = processedAdData.mediaUrls[i]
-                const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('video') || mediaUrl.includes('fbcdn') && mediaUrl.includes('v/')
 
-                const assetFile = await prisma.assetFile.create({
-                    data: {
-                        assetId: asset.id,
-                        type: isVideo ? 'video' : 'image',
-                        url: mediaUrl,
-                        cloudinaryId: `temp_${asset.id}_${i}`, // Temp ID until Cloudinary upload
-                        width: null,
-                        height: null,
-                        fileSize: null,
-                        duration: null,
-                        order: i
+        if (processedAdData.mediaDetails.length > 0) {
+            for (let i = 0; i < processedAdData.mediaDetails.length; i++) {
+                const mediaItem = processedAdData.mediaDetails[i]
+
+                try {
+                    let uploadResult
+
+                    // Upload to Cloudinary based on media type
+                    if (mediaItem.type === 'video') {
+                        uploadResult = await uploadVideoFromUrl(mediaItem.url, {
+                            orgId,
+                            assetId: asset.id
+                        })
+                    } else {
+                        uploadResult = await uploadImageFromUrl(mediaItem.url, {
+                            orgId,
+                            assetId: asset.id
+                        })
                     }
-                })
 
-                uploadedFiles.push({
-                    url: assetFile.url,
-                    type: assetFile.type
-                })
+                    // Store uploaded file metadata in database
+                    const assetFile = await prisma.assetFile.create({
+                        data: {
+                            assetId: asset.id,
+                            type: mediaItem.type,
+                            url: uploadResult.secure_url,
+                            cloudinaryId: uploadResult.public_id,
+                            width: uploadResult.width,
+                            height: uploadResult.height,
+                            fileSize: uploadResult.bytes,
+                            duration: uploadResult.duration,
+                            order: i
+                        }
+                    })
+
+                    uploadedFiles.push({
+                        url: assetFile.url,
+                        type: assetFile.type,
+                        source: mediaItem.source,
+                        alt: mediaItem.alt || ''
+                    })
+
+                    console.log(`✅ Successfully uploaded ${mediaItem.type} to Cloudinary: ${uploadResult.public_id}`)
+                } catch (error) {
+                    console.error(`❌ Failed to upload media ${mediaItem.url}:`, error)
+
+                    // Create a fallback entry with original URL if Cloudinary upload fails
+                    const assetFile = await prisma.assetFile.create({
+                        data: {
+                            assetId: asset.id,
+                            type: mediaItem.type,
+                            url: mediaItem.url, // Fallback to original URL
+                            cloudinaryId: `failed_upload_${asset.id}_${i}_${mediaItem.source}`,
+                            width: null,
+                            height: null,
+                            fileSize: null,
+                            duration: null,
+                            order: i
+                        }
+                    })
+
+                    uploadedFiles.push({
+                        url: assetFile.url,
+                        type: assetFile.type,
+                        source: mediaItem.source,
+                        alt: mediaItem.alt || ''
+                    })
+
+                    // Continue with other files even if one fails
+                }
             }
+
+            console.log(`📁 Processed ${uploadedFiles.length} media files (uploaded to Cloudinary where possible)`)
         }
 
-        // Add to board
-        let targetBoardId = boardId
-        if (!targetBoardId) {
+        // Add to boards
+        let finalBoardIds = [...boardIds]
+
+        // If no boards specified, use default board
+        if (finalBoardIds.length === 0) {
             // Find default board or create one
             const defaultBoard = await prisma.board.findFirst({
                 where: {
@@ -264,7 +366,7 @@ export async function POST(req: NextRequest) {
             })
 
             if (defaultBoard) {
-                targetBoardId = defaultBoard.id
+                finalBoardIds = [defaultBoard.id]
             } else {
                 const newBoard = await prisma.board.create({
                     data: {
@@ -274,16 +376,19 @@ export async function POST(req: NextRequest) {
                         orgId
                     }
                 })
-                targetBoardId = newBoard.id
+                finalBoardIds = [newBoard.id]
             }
         }
 
-        if (targetBoardId) {
-            await prisma.boardAsset.create({
-                data: {
-                    boardId: targetBoardId,
-                    assetId: asset.id
-                }
+        // Create board-asset associations for all specified boards
+        if (finalBoardIds.length > 0) {
+            const boardAssetCreations = finalBoardIds.map(boardId => ({
+                boardId,
+                assetId: asset.id
+            }))
+
+            await prisma.boardAsset.createMany({
+                data: boardAssetCreations
             })
         }
 
@@ -346,10 +451,11 @@ export async function POST(req: NextRequest) {
             description: asset.description,
             adUrl: asset.adUrl,
             media: uploadedFiles,
-            boardId: targetBoardId,
+            boardIds: finalBoardIds,
             runtimeDays: asset.runtimeDays,
             firstSeenDate: asset.firstSeenDate,
-            lastSeenDate: asset.lastSeenDate
+            lastSeenDate: asset.lastSeenDate,
+            message: `Ad saved to ${finalBoardIds.length} board(s) successfully!`
         })
 
         // Add CORS headers for Chrome extension

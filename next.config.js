@@ -5,7 +5,32 @@ const nextConfig = {
 
     // Image optimization configuration
     images: {
-        domains: ['res.cloudinary.com', 'scontent.facebook.com', 'external.facebook.com'],
+        remotePatterns: [
+            {
+                protocol: 'https',
+                hostname: 'res.cloudinary.com',
+            },
+            {
+                protocol: 'https',
+                hostname: '**.fbcdn.net', // Facebook CDN images
+            },
+            {
+                protocol: 'https',
+                hostname: 'scontent.**.fbcdn.net', // Facebook content images
+            },
+            {
+                protocol: 'https',
+                hostname: 'external.**.fbcdn.net', // Facebook external images
+            },
+            {
+                protocol: 'https',
+                hostname: 'scontent.facebook.com',
+            },
+            {
+                protocol: 'https',
+                hostname: 'external.facebook.com',
+            }
+        ],
         formats: ['image/webp', 'image/avif'],
         minimumCacheTTL: 86400, // 24 hours
     },
@@ -47,8 +72,8 @@ const nextConfig = {
         ]
     },
 
-      // External packages for server components
-  serverExternalPackages: ['@prisma/client'],
+    // External packages for server components
+    serverExternalPackages: ['@prisma/client'],
 
     // Environment variables validation
     env: {
