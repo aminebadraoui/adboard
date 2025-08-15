@@ -10,19 +10,21 @@ export default async function DashboardLayout({
 }) {
   const session = await auth()
 
-    if (!session) {
-        redirect('/auth/signin')
-    }
+  if (!session) {
+    redirect('/auth/signin')
+  }
 
-    return (
-        <div className="min-h-screen bg-gray-50">
-            <DashboardNav />
-            <div className="flex">
-                <Sidebar />
-                <main className="flex-1 p-6">
-                    {children}
-                </main>
-            </div>
-        </div>
-    )
+  return (
+    <div className="min-h-screen bg-background app-shell">
+      <DashboardNav />
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1 p-0 bg-gray-50 min-h-screen">
+          <div className="p-6">
+            {children}
+          </div>
+        </main>
+      </div>
+    </div>
+  )
 }

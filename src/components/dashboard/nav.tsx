@@ -11,7 +11,7 @@ export function DashboardNav() {
     const [searchQuery, setSearchQuery] = useState('')
 
     return (
-        <header className="bg-white border-b border-gray-200">
+        <header className="bg-gray-900 border-b border-gray-700">
             <div className="px-6 py-4">
                 <div className="flex items-center justify-between">
                     {/* Logo */}
@@ -19,7 +19,7 @@ export function DashboardNav() {
                         <div className="h-8 w-8 flex items-center justify-center rounded bg-blue-600">
                             <span className="text-sm font-bold text-white">AB</span>
                         </div>
-                        <h1 className="text-xl font-semibold text-gray-900">AdBoard</h1>
+                        <h1 className="text-xl font-semibold text-white">AdBoard</h1>
                     </div>
 
                     {/* Search */}
@@ -31,27 +31,27 @@ export function DashboardNav() {
                                 placeholder="Search ads, brands, or keywords..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-10"
+                                className="pl-10 bg-gray-800 border-gray-600 text-white placeholder-gray-400 focus:border-blue-500 focus:ring-blue-500"
                             />
                         </div>
                     </div>
 
                     {/* Actions */}
                     <div className="flex items-center space-x-3">
-                        <Button variant="default" size="sm">
+                        <Button variant="default" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white border-0">
                             <Plus className="h-4 w-4 mr-2" />
                             Add Ad
                         </Button>
 
                         <div className="flex items-center space-x-2">
-                            <Button variant="ghost" size="icon" asChild>
+                            <Button variant="ghost" size="icon" asChild className="text-gray-300 hover:text-white hover:bg-gray-800">
                                 <a href="/dashboard/settings">
                                     <Settings className="h-4 w-4" />
                                 </a>
                             </Button>
 
-                            <div className="flex items-center space-x-2 border-l border-gray-200 pl-3">
-                                <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
+                            <div className="flex items-center space-x-2 border-l border-gray-600 pl-3">
+                                <div className="h-8 w-8 rounded-full bg-gray-700 flex items-center justify-center">
                                     {session?.user?.image ? (
                                         <img
                                             src={session.user.image}
@@ -59,14 +59,14 @@ export function DashboardNav() {
                                             className="h-8 w-8 rounded-full"
                                         />
                                     ) : (
-                                        <User className="h-4 w-4 text-gray-500" />
+                                        <User className="h-4 w-4 text-gray-300" />
                                     )}
                                 </div>
                                 <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => signOut()}
-                                    className="text-gray-500 hover:text-gray-700"
+                                    className="text-gray-300 hover:text-white hover:bg-gray-800"
                                 >
                                     <LogOut className="h-4 w-4" />
                                 </Button>

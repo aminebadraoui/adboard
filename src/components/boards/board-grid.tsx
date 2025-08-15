@@ -7,7 +7,6 @@ import { Board, BoardAsset, Asset, AssetFile, Tag, AssetTag } from '@prisma/clie
 import { Button } from '@/components/ui/button'
 import {
     ExternalLink,
-    Heart,
     Eye,
     Tag as TagIcon,
     Trash2,
@@ -34,27 +33,15 @@ interface BoardGridProps {
 export function BoardGrid({ board }: BoardGridProps) {
     const [selectedAd, setSelectedAd] = useState<string | null>(null)
     const [deletingAsset, setDeletingAsset] = useState<string | null>(null)
-    const [expandedAdText, setExpandedAdText] = useState<Set<string>>(new Set())
     const router = useRouter()
 
     const openAdPreview = (assetId: string) => {
         setSelectedAd(assetId)
     }
 
-    const toggleAdTextExpansion = (assetId: string) => {
-        const newExpanded = new Set(expandedAdText)
-        if (newExpanded.has(assetId)) {
-            newExpanded.delete(assetId)
-        } else {
-            newExpanded.add(assetId)
-        }
-        setExpandedAdText(newExpanded)
-    }
-
-    const handleVideoPlay = (asset: Asset) => {
+    const handleVideoPlay = (asset: Asset & { files: AssetFile[] }) => {
         const videoFile = asset.files.find(f => f.type === 'video')
         if (videoFile) {
-            // Open video in a new tab or play in modal
             window.open(videoFile.url, '_blank')
         }
     }
@@ -73,7 +60,7 @@ export function BoardGrid({ board }: BoardGridProps) {
 
             if (response.ok) {
                 toast.success('Ad removed from board successfully!')
-                router.refresh() // Refresh to update the board
+                router.refresh()
             } else {
                 const errorData = await response.json()
                 toast.error(errorData.error || 'Failed to remove ad')
@@ -100,149 +87,131 @@ export function BoardGrid({ board }: BoardGridProps) {
                     return (
                         <div
                             key={boardAsset.id}
-                            className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+                            className="group bg-white rounded-lg overflow-hidden hover:shadow-md transition-all duration-200 border-0"
                         >
                             {/* Ad Preview */}
-                            <div
-                                className="aspect-square bg-gray-100 relative overflow-hidden cursor-pointer"
-                                onClick={() => hasVideo ? handleVideoPlay(asset) : openAdPreview(asset.id)}
-                            >
-                                {primaryImage ? (
-                                    <>
-                                        <Image
-                                            src={primaryImage.url}
-                                            alt={asset.headline || 'Facebook Ad'}
-                                            fill
-                                            className="object-cover group-hover:scale-105 transition-transform duration-200"
-                                            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
-                                        />
-                                        {/* Video Play Button Overlay */}
-                                        {hasVideo && (
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <div className="bg-black bg-opacity-60 rounded-full p-3 group-hover:bg-opacity-80 transition-all">
-                                                    <Play className="w-8 h-8 text-white fill-current" />
+                            <div className="relative">
+                                <div
+                                    className="aspect-[4/5] bg-gray-100 relative overflow-hidden cursor-pointer"
+                                    onClick={() => hasVideo ? handleVideoPlay(asset) : openAdPreview(asset.id)}
+                                >
+                                    {primaryImage ? (
+                                        <>
+                                            <Image
+                                                src={primaryImage.url}
+                                                alt={asset.headline || 'Facebook Ad'}
+                                                fill
+                                                className="object-cover group-hover:scale-105 transition-transform duration-300"
+                                                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                                            />
+                                            {/* Video Play Button Overlay */}
+                                            {hasVideo && (
+                                                <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/10 transition-all duration-300">
+                                                    <div className="bg-white/90 backdrop-blur-sm rounded-full p-3 group-hover:bg-primary group-hover:scale-110 transition-all duration-300 shadow-lg">
+                                                        <Play className="w-6 h-6 text-black group-hover:text-white fill-current" />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Top right indicators */}
+                                            <div className="absolute top-2 right-2 flex flex-col gap-1">
+                                                {/* Time indicator for videos */}
+                                                {hasVideo && (
+                                                    <div className="bg-black/70 text-white text-xs px-2 py-1 rounded-md backdrop-blur-sm">
+                                                        Video
+                                                    </div>
+                                                )}
+
+                                                {/* Actions menu */}
+                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                                    <div className="flex flex-col gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-8 w-8 p-0 bg-black bg-opacity-60 hover:bg-opacity-80 text-white border-0"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                window.open(asset.adUrl, '_blank')
+                                                            }}
+                                                            title="View Original Ad"
+                                                        >
+                                                            <ExternalLink className="w-4 h-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-8 w-8 p-0 bg-black bg-opacity-60 hover:bg-opacity-80 text-white border-0"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                handleDeleteAsset(asset.id)
+                                                            }}
+                                                            disabled={deletingAsset === asset.id}
+                                                            title={deletingAsset === asset.id ? 'Removing...' : 'Remove from Board'}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        )}
-                                    </>
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center">
-                                        <div className="text-center">
-                                            <div className="w-12 h-12 mx-auto mb-2 bg-gray-200 rounded-lg flex items-center justify-center">
-                                                <Eye className="w-6 h-6 text-gray-400" />
+                                        </>
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center">
+                                            <div className="text-center">
+                                                <div className="w-12 h-12 mx-auto mb-2 bg-gray-200 rounded-lg flex items-center justify-center">
+                                                    <Eye className="w-6 h-6 text-gray-400" />
+                                                </div>
+                                                <p className="text-xs text-gray-500">No preview</p>
                                             </div>
-                                            <p className="text-xs text-gray-500">No preview</p>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
 
 
                             </div>
 
-                            {/* Ad Info */}
+                            {/* Ad Info - Full content visible */}
                             <div className="p-4">
-                                <div className="flex items-start justify-between mb-2">
-                                    <h3 className="font-medium text-gray-900 text-sm flex-1">
-                                        {asset.headline || asset.adText?.split('.')[0] || 'Untitled Ad'}
-                                    </h3>
-                                    <div className="flex items-center gap-1 ml-2">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 w-6 p-0"
-                                            onClick={() => window.open(asset.adUrl, '_blank')}
-                                            title="View Original Ad"
-                                        >
-                                            <ExternalLink className="w-3 h-3" />
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                            onClick={() => handleDeleteAsset(asset.id)}
-                                            disabled={deletingAsset === asset.id}
-                                            title={deletingAsset === asset.id ? 'Removing...' : 'Remove from Board'}
-                                        >
-                                            <Trash2 className="w-3 h-3" />
-                                        </Button>
-                                    </div>
-                                </div>
+                                {/* Full Title */}
+                                <h3 className="font-medium text-gray-900 text-sm mb-3 leading-tight">
+                                    {asset.headline || 'Untitled Ad'}
+                                </h3>
 
-                                {asset.description && (
-                                    <p className="text-xs text-gray-600 mb-3 line-clamp-2">
-                                        {asset.description}
-                                    </p>
-                                )}
-
-                                {/* Ad Text */}
+                                {/* Full Ad Text */}
                                 {asset.adText && (
                                     <div className="mb-3">
-                                        <div className="text-xs font-medium text-gray-700 mb-1">Ad Text:</div>
-                                        <div className="text-xs text-gray-600">
-                                            {(() => {
-                                                const isExpanded = expandedAdText.has(asset.id)
-                                                const shouldTruncate = asset.adText.length > 150
-                                                const displayText = shouldTruncate && !isExpanded
-                                                    ? asset.adText.substring(0, 150) + '...'
-                                                    : asset.adText
-
-                                                return (
-                                                    <>
-                                                        <div className="whitespace-pre-wrap">
-                                                            {displayText}
-                                                        </div>
-                                                        {shouldTruncate && (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation()
-                                                                    toggleAdTextExpansion(asset.id)
-                                                                }}
-                                                                className="text-blue-600 hover:text-blue-800 font-medium mt-1"
-                                                            >
-                                                                {isExpanded ? 'Show less' : 'Show more'}
-                                                            </button>
-                                                        )}
-                                                    </>
-                                                )
-                                            })()}
-                                        </div>
+                                        <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
+                                            {asset.adText}
+                                        </p>
                                     </div>
                                 )}
 
                                 {/* Tags */}
                                 {asset.tags.length > 0 && (
                                     <div className="flex flex-wrap gap-1 mb-3">
-                                        {asset.tags.slice(0, 3).map((assetTag) => (
+                                        {asset.tags.map((assetTag) => (
                                             <span
                                                 key={assetTag.id}
-                                                className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700"
+                                                className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-700"
                                             >
                                                 <TagIcon className="w-3 h-3 mr-1" />
                                                 {assetTag.tag.name}
                                             </span>
                                         ))}
-                                        {asset.tags.length > 3 && (
-                                            <span className="text-xs text-gray-500">
-                                                +{asset.tags.length - 3} more
-                                            </span>
-                                        )}
                                     </div>
                                 )}
 
-                                {/* Ad Metadata */}
-                                <div className="flex items-center justify-between text-xs text-gray-500">
-                                    <span>
-                                        Added {formatDistanceToNow(new Date(boardAsset.addedAt), { addSuffix: true })}
+                                {/* Metadata */}
+                                <div className="flex items-center justify-between text-xs text-gray-500 pt-2">
+                                    <span className="flex items-center gap-1">
+                                        <div className="w-1 h-1 bg-green-400 rounded-full"></div>
+                                        Saved {formatDistanceToNow(new Date(boardAsset.addedAt), { addSuffix: true })}
                                     </span>
-                                    {asset.sourceUrl && (
-                                        <a
-                                            href={asset.sourceUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="inline-flex items-center text-blue-600 hover:text-blue-800"
-                                        >
-                                            <ExternalLink className="w-3 h-3" />
-                                        </a>
+
+                                    {/* Brand name */}
+                                    {asset.brandName && (
+                                        <span className="text-gray-700 font-medium">
+                                            {asset.brandName}
+                                        </span>
                                     )}
                                 </div>
                             </div>
@@ -253,14 +222,14 @@ export function BoardGrid({ board }: BoardGridProps) {
 
             {/* Ad Preview Modal - TODO: Implement in next step */}
             {selectedAd && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-auto">
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-auto shadow-2xl">
                         <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-lg font-semibold">Ad Preview</h2>
+                            <h2 className="text-lg font-semibold text-gray-900">Ad Preview</h2>
                             <Button
                                 variant="ghost"
                                 onClick={() => setSelectedAd(null)}
-                                className="h-8 w-8 p-0"
+                                className="h-8 w-8 p-0 text-gray-500 hover:text-gray-700"
                             >
                                 ✕
                             </Button>
