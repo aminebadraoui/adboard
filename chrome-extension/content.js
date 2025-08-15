@@ -195,14 +195,27 @@ class AdBoardSaver {
         const images = container.querySelectorAll('img')
         images.forEach(img => {
             if (img.src && (img.src.includes('fbcdn') || img.src.includes('scontent'))) {
-                // Skip small profile images and icons
-                const isSmallImage = img.src.includes('s60x60') ||
-                    img.src.includes('s40x40') ||
-                    img.src.includes('s32x32') ||
-                    img.offsetWidth < 100 ||
-                    img.offsetHeight < 100
+                // Skip small profile images and icons based on URL patterns
+                const isSmallImage = img.src.includes('_s60x60') ||
+                    img.src.includes('_s40x40') ||
+                    img.src.includes('_s32x32') ||
+                    img.src.includes('s60x60_') ||
+                    img.src.includes('s40x40_') ||
+                    img.src.includes('s32x32_')
 
-                if (!isSmallImage) {
+                // Get actual image dimensions from URL if available
+                const urlSizeMatch = img.src.match(/s(\d+)x(\d+)/)
+                let isLargeEnough = true
+                if (urlSizeMatch) {
+                    const width = parseInt(urlSizeMatch[1])
+                    const height = parseInt(urlSizeMatch[2])
+                    isLargeEnough = width >= 200 || height >= 200
+                } else {
+                    // Fallback to DOM dimensions if no URL size info
+                    isLargeEnough = img.offsetWidth >= 100 || img.offsetHeight >= 100
+                }
+
+                if (!isSmallImage && isLargeEnough) {
                     mediaUrls.push({
                         url: img.src,
                         type: 'image',
@@ -242,9 +255,21 @@ class AdBoardSaver {
             mediaCount: mediaUrls.length,
             mediaTypes: mediaUrls.map(m => `${m.type}(${m.source})`).join(', '),
             mainMediaUrl: mediaUrls[0]?.url || 'none',
+            totalImagesFound: images.length,
             hasSponsored,
             hasSeeAdDetails
         })
+
+        // Debug: Log all image URLs found for troubleshooting
+        if (images.length > 0 && mediaUrls.length === 0) {
+            console.log('🔍 No media detected but images found. Debugging:',
+                Array.from(images).map(img => ({
+                    src: img.src?.substring(0, 100) + '...',
+                    dimensions: `${img.offsetWidth}x${img.offsetHeight}`,
+                    classes: img.className
+                }))
+            )
+        }
 
         return result
     }
