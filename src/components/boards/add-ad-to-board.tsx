@@ -120,7 +120,7 @@ export function AddAdToBoard({ boardId }: AddAdToBoardProps) {
                                     disabled={isLoading}
                                 />
                                 <p className="text-xs text-gray-500 mt-1">
-                                    Paste a URL from Facebook Ad Library or a Facebook ad post
+                                    Paste a URL from Facebook Ad Library. We'll create a reference entry with the link - full API access requires Facebook app approval.
                                 </p>
                             </div>
 

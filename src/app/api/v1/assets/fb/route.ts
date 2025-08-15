@@ -1,28 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getAuthenticatedUser, getOrCreateDefaultOrg, checkOrgAccess } from '@/lib/auth-helpers'
-import { scrapeFacebookAd, validateFacebookAdUrl, calculateRuntimeDays } from '@/lib/facebook-scraper'
+// Use the working API endpoint approach instead
+import { validateFacebookAdUrl, calculateRuntimeDays } from '@/lib/facebook-scraper'
 import { prisma } from '@/lib/prisma'
+
+// OPTIONS handler for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+    const origin = request.headers.get('origin')
+
+    const response = new NextResponse(null, { status: 200 })
+
+    if (origin && (origin.includes('facebook.com') || origin.startsWith('chrome-extension://'))) {
+        response.headers.set('Access-Control-Allow-Origin', origin)
+        response.headers.set('Access-Control-Allow-Credentials', 'true')
+        response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With')
+    }
+
+    return response
+}
 
 const createAssetSchema = z.object({
     adUrl: z.string().url(),
     boardId: z.string().optional(),
+    pageId: z.string().optional(),
     tags: z.array(z.string()).optional().default([]),
+    // Ad data extracted by Chrome extension
+    adData: z.object({
+        fbAdId: z.string(),
+        brandName: z.string(),
+        headline: z.string().optional(),
+        adText: z.string().optional(),
+        description: z.string().optional(),
+        cta: z.string().optional(),
+        mediaUrls: z.array(z.string()).optional().default([]),
+        firstSeenDate: z.string().optional(), // ISO date string
+        lastSeenDate: z.string().optional(), // ISO date string
+    }),
 })
 
 export async function POST(req: NextRequest) {
+    console.log('🚨 ASSETS/FB POST ENDPOINT HIT!')
     try {
         // Authenticate user
-        const authContext = await getAuthenticatedUser(req)
+        console.log('🚨 About to authenticate user...')
+        let authContext = await getAuthenticatedUser(req)
+
         if (!authContext) {
+            console.log('🔍 ASSETS/FB: NextAuth failed, trying manual session validation...')
+            const cookieHeader = req.headers.get('cookie')
+            if (cookieHeader) {
+                const sessionTokenMatch = cookieHeader.match(/authjs\.session-token=([^;]+)/)
+                if (sessionTokenMatch) {
+                    const sessionToken = sessionTokenMatch[1]
+                    console.log('🔍 ASSETS/FB: Found session token, looking up in database...')
+
+                    const dbSession = await prisma.session.findUnique({
+                        where: { sessionToken },
+                        include: { user: true }
+                    })
+
+                    if (dbSession && dbSession.expires > new Date()) {
+                        const user = dbSession.user
+                        authContext = { user, userId: user.id }
+                        console.log('🎯 ASSETS/FB: Found valid session in database for user:', user.id)
+                    }
+                }
+            }
+        }
+
+        if (!authContext) {
+            console.log('🚨 ASSETS/FB: Unauthorized - no valid session found')
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
         }
 
         const { user, userId } = authContext
+        console.log('🚨 User authenticated successfully:', userId)
 
         // Parse request body
         const body = await req.json()
-        const { adUrl, boardId, tags } = createAssetSchema.parse(body)
+        console.log('🚨 Request body:', body)
+        const { adUrl, boardId, pageId, tags, adData } = createAssetSchema.parse(body)
+        console.log('🚨 Parsed data - adUrl:', adUrl, 'boardId:', boardId, 'pageId:', pageId)
+        console.log('🎯 Received ad data:', adData)
 
         // Validate Facebook ad URL
         const { isValid, adId } = validateFacebookAdUrl(adUrl)
@@ -34,6 +95,7 @@ export async function POST(req: NextRequest) {
         const orgId = await getOrCreateDefaultOrg(userId)
 
         // Check if asset already exists for this org
+        console.log('🚨 Checking if asset already exists for adId:', adId, 'orgId:', orgId)
         const existingAsset = await prisma.asset.findUnique({
             where: {
                 fbAdId_orgId: {
@@ -57,8 +119,17 @@ export async function POST(req: NextRequest) {
         })
 
         if (existingAsset) {
+            console.log('🚨 FOUND EXISTING ASSET:', {
+                id: existingAsset.id,
+                fbAdId: existingAsset.fbAdId,
+                brandName: existingAsset.brandName,
+                headline: existingAsset.headline,
+                description: existingAsset.description
+            })
+
             // Check if this ad is already on the specified board
             const isAlreadyOnBoard = boardId && existingAsset.boards.some(ba => ba.boardId === boardId)
+            console.log('🚨 Is already on board?', isAlreadyOnBoard)
 
             if (boardId && !isAlreadyOnBoard) {
                 // Add to the specified board
@@ -107,24 +178,46 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Scrape Facebook ad data
-        const adData = await scrapeFacebookAd(adUrl)
+        // Use ad data provided by Chrome extension
+        console.log('🎯 ASSETS/FB: Using ad data from Chrome extension for adId:', adId)
 
-        // Create asset record with scraped data
+        const processedAdData = {
+            fbAdId: adData.fbAdId,
+            brandName: adData.brandName,
+            headline: adData.headline || '',
+            adText: adData.adText || '',
+            description: adData.description || '',
+            cta: adData.cta || '',
+            adUrl: adUrl, // Use the original Facebook URL
+            originalUrl: adUrl,
+            firstSeenDate: adData.firstSeenDate ? new Date(adData.firstSeenDate) : undefined,
+            lastSeenDate: adData.lastSeenDate ? new Date(adData.lastSeenDate) : undefined,
+            fbPageId: pageId || '',
+            mediaUrls: adData.mediaUrls || []
+        }
+
+        console.log('🎯 ASSETS/FB: Processed ad data:', {
+            fbAdId: processedAdData.fbAdId,
+            brandName: processedAdData.brandName,
+            headline: processedAdData.headline?.substring(0, 50) + '...',
+            adTextLength: processedAdData.adText?.length
+        })
+
+        // Create asset record with data from Chrome extension
         const asset = await prisma.asset.create({
             data: {
                 platform: 'facebook',
-                fbAdId: adData.fbAdId,
-                fbPageId: adData.fbPageId,
-                adUrl: adData.adUrl,
-                headline: adData.headline,
-                cta: adData.cta,
-                brandName: adData.brandName,
-                adText: adData.adText,
-                description: adData.description,
-                firstSeenDate: adData.firstSeenDate,
-                lastSeenDate: adData.lastSeenDate,
-                runtimeDays: calculateRuntimeDays(adData.firstSeenDate, adData.lastSeenDate),
+                fbAdId: processedAdData.fbAdId,
+                fbPageId: processedAdData.fbPageId,
+                adUrl: processedAdData.adUrl,
+                headline: processedAdData.headline,
+                cta: processedAdData.cta,
+                brandName: processedAdData.brandName,
+                adText: processedAdData.adText,
+                description: processedAdData.description,
+                firstSeenDate: processedAdData.firstSeenDate,
+                lastSeenDate: processedAdData.lastSeenDate,
+                runtimeDays: calculateRuntimeDays(processedAdData.firstSeenDate, processedAdData.lastSeenDate),
                 createdById: userId,
                 orgId
             }
@@ -133,9 +226,9 @@ export async function POST(req: NextRequest) {
         // For now, store media URLs directly without Cloudinary upload
         // (Cloudinary integration comes next)
         const uploadedFiles = []
-        if (adData.mediaUrls.length > 0) {
-            for (let i = 0; i < adData.mediaUrls.length; i++) {
-                const mediaUrl = adData.mediaUrls[i]
+        if (processedAdData.mediaUrls.length > 0) {
+            for (let i = 0; i < processedAdData.mediaUrls.length; i++) {
+                const mediaUrl = processedAdData.mediaUrls[i]
                 const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('video') || mediaUrl.includes('fbcdn') && mediaUrl.includes('v/')
 
                 const assetFile = await prisma.assetFile.create({
@@ -242,7 +335,7 @@ export async function POST(req: NextRequest) {
             }
         })
 
-        return NextResponse.json({
+        const finalResponse = NextResponse.json({
             id: asset.id,
             fbAdId: asset.fbAdId,
             fbPageId: asset.fbPageId,
@@ -259,10 +352,21 @@ export async function POST(req: NextRequest) {
             lastSeenDate: asset.lastSeenDate
         })
 
+        // Add CORS headers for Chrome extension
+        const origin = req.headers.get('origin')
+        if (origin && (origin.includes('facebook.com') || origin.startsWith('chrome-extension://'))) {
+            finalResponse.headers.set('Access-Control-Allow-Origin', origin)
+            finalResponse.headers.set('Access-Control-Allow-Credentials', 'true')
+        }
+
+        return finalResponse
+
     } catch (error) {
-        console.error('Error creating Facebook ad asset:', error)
+        console.error('🚨 ERROR in assets/fb endpoint:', error)
+        console.error('🚨 Error stack:', error instanceof Error ? error.stack : 'No stack')
 
         if (error instanceof z.ZodError) {
+            console.error('🚨 Zod validation error:', error.errors)
             return NextResponse.json({ error: 'Invalid request data', details: error.errors }, { status: 400 })
         }
 

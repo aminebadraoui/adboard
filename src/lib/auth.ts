@@ -24,13 +24,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/auth/error",
   },
   callbacks: {
-    session: async ({ session, user }) => {
+    async signIn({ user, account, profile, email, credentials }) {
+      console.log('🔐 NextAuth signIn callback:', { user: user?.email, account: account?.provider })
+      return true
+    },
+    async redirect({ url, baseUrl }) {
+      console.log('🔄 NextAuth redirect callback:', { url, baseUrl })
+
+      // If redirecting to signin page, go to dashboard instead
+      if (url.includes('/auth/signin')) {
+        console.log('🎯 Redirecting from signin to dashboard')
+        return baseUrl + "/dashboard"
+      }
+
+      // Allows relative callback URLs
+      if (url.startsWith("/")) return `${baseUrl}${url}`
+      // Allows callback URLs on the same origin
+      else if (new URL(url).origin === baseUrl) return url
+
+      // Default to dashboard
+      return baseUrl + "/dashboard"
+    },
+    async session({ session, user }) {
+      console.log('📝 NextAuth session callback:', { session: session?.user?.email, user: user?.email })
       if (session?.user && user) {
         session.user.id = user.id
       }
       return session
     },
-    jwt: async ({ user, token }) => {
+    async jwt({ user, token }) {
       if (user) {
         token.uid = user.id
       }
@@ -40,5 +62,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: "database",
   },
+  cookies: {
+    sessionToken: {
+      name: process.env.NODE_ENV === "production" ? "__Secure-next-auth.session-token" : "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax", // Changed from "none" to "lax" for better compatibility
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+      },
+    },
+  },
+  debug: process.env.NODE_ENV === "development",
   secret: process.env.NEXTAUTH_SECRET,
 })

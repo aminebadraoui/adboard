@@ -1,0 +1,45 @@
+{
+    "manifest_version": 3,
+    "name": "AdBoard - Facebook Ads Saver",
+    "version": "1.0.0",
+    "description": "Save Facebook ads to your AdBoard collections",
+    "permissions": [
+        "activeTab",
+        "storage",
+        "scripting",
+        "cookies"
+    ],
+    "host_permissions": [
+        "https://www.facebook.com/*",
+        "http://localhost:3000/*",
+        "https://your-adboard-domain.com/*"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://www.facebook.com/ads/library/*",
+                "https://www.facebook.com/ads/library/?*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "css": [
+                "content.css"
+            ],
+            "run_at": "document_end"
+        }
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "AdBoard Saver"
+    },
+    "icons": {
+        "16": "icons/icon16.png",
+        "32": "icons/icon32.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    }
+}

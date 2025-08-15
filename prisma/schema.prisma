@@ -1,14 +1,11 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")      // Pooled connection for app runtime
-  directUrl = env("DIRECT_URL")        // Direct connection for migrations
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Account {
@@ -17,15 +14,14 @@ model Account {
   type              String
   provider          String
   providerAccountId String  @map("provider_account_id")
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@map("accounts")
@@ -42,20 +38,19 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
+  id            String        @id @default(cuid())
   name          String?
-  email         String    @unique
-  emailVerified DateTime? @map("email_verified")
+  email         String        @unique
+  emailVerified DateTime?     @map("email_verified")
   image         String?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  accounts      Account[]
-  sessions      Session[]
-  memberships   Membership[]
-  createdAssets Asset[]
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
   accessTokens  AccessToken[]
+  accounts      Account[]
+  createdAssets Asset[]
   auditLogs     AuditLog[]
+  memberships   Membership[]
+  sessions      Session[]
 
   @@map("users")
 }
@@ -77,87 +72,82 @@ model AccessToken {
   lastUsed  DateTime? @map("last_used")
   createdAt DateTime  @default(now()) @map("created_at")
   expiresAt DateTime? @map("expires_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("access_tokens")
 }
 
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  memberships Membership[]
-  boards      Board[]
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
   assets      Asset[]
-  tags        Tag[]
-  shareLinks  ShareLink[]
-  briefs      Brief[]
   auditLogs   AuditLog[]
+  boards      Board[]
+  briefs      Brief[]
+  memberships Membership[]
+  shareLinks  ShareLink[]
+  tags        Tag[]
 
   @@map("organizations")
 }
 
 model Membership {
-  id     String @id @default(cuid())
-  role   Role   @default(VIEWER)
-  userId String @map("user_id")
-  orgId  String @map("org_id")
-
-  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  id     String       @id @default(cuid())
+  role   Role         @default(VIEWER)
+  userId String       @map("user_id")
+  orgId  String       @map("org_id")
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, orgId])
   @@map("memberships")
 }
 
 model Board {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   name        String
   description String?
   color       String?
-  isDefault   Boolean  @default(false) @map("is_default")
-  orgId       String   @map("org_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  assets BoardAsset[]
+  isDefault   Boolean      @default(false) @map("is_default")
+  orgId       String       @map("org_id")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  assets      BoardAsset[]
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("boards")
 }
 
 model Asset {
-  id            String    @id @default(cuid())
-  platform      String    @default("facebook")
-  fbAdId        String?   @map("fb_ad_id")
-  fbPageId      String?   @map("fb_page_id")
-  adUrl         String    @map("ad_url")
+  id            String       @id @default(cuid())
+  platform      String       @default("facebook")
+  fbAdId        String?      @map("fb_ad_id")
+  fbPageId      String?      @map("fb_page_id")
+  adUrl         String       @map("ad_url")
   headline      String?
   cta           String?
-  brandName     String?   @map("brand_name")
-  adText        String?   @map("ad_text")
+  brandName     String?      @map("brand_name")
+  adText        String?      @map("ad_text")
   description   String?
-  firstSeenDate DateTime? @map("first_seen_date")
-  lastSeenDate  DateTime? @map("last_seen_date")
-  runtimeDays   Int?      @map("runtime_days")
+  firstSeenDate DateTime?    @map("first_seen_date")
+  lastSeenDate  DateTime?    @map("last_seen_date")
+  runtimeDays   Int?         @map("runtime_days")
   notes         String?
-  createdById   String    @map("created_by_id")
-  orgId         String    @map("org_id")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  createdBy  User         @relation(fields: [createdById], references: [id])
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  files      AssetFile[]
-  boards     BoardAsset[]
-  tags       AssetTag[]
-  shareLinks ShareLink[]
-  briefs     BriefAsset[]
-  auditLogs  AuditLog[]
+  createdById   String       @map("created_by_id")
+  orgId         String       @map("org_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  files         AssetFile[]
+  tags          AssetTag[]
+  createdBy     User         @relation(fields: [createdById], references: [id])
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  auditLogs     AuditLog[]
+  boards        BoardAsset[]
+  briefs        BriefAsset[]
+  shareLinks    ShareLink[]
 
   @@unique([fbAdId, orgId])
   @@index([platform])
@@ -170,18 +160,17 @@ model Asset {
 model AssetFile {
   id           String   @id @default(cuid())
   assetId      String   @map("asset_id")
-  type         String // 'image' | 'video'
+  type         String
   url          String
   cloudinaryId String   @map("cloudinary_id")
   thumbnailUrl String?  @map("thumbnail_url")
   width        Int?
   height       Int?
   fileSize     Int?     @map("file_size")
-  duration     Float? // for videos
+  duration     Float?
   order        Int      @default(0)
   createdAt    DateTime @default(now()) @map("created_at")
-
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  asset        Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@map("asset_files")
 }
@@ -192,22 +181,20 @@ model BoardAsset {
   assetId String   @map("asset_id")
   order   Int      @default(0)
   addedAt DateTime @default(now()) @map("added_at")
-
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  asset   Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  board   Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
 
   @@unique([boardId, assetId])
   @@map("board_assets")
 }
 
 model Tag {
-  id    String  @id @default(cuid())
-  name  String
-  color String?
-  orgId String  @map("org_id")
-
-  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  id     String       @id @default(cuid())
+  name   String
+  color  String?
+  orgId  String       @map("org_id")
   assets AssetTag[]
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([name, orgId])
   @@map("tags")
@@ -217,43 +204,40 @@ model AssetTag {
   id      String @id @default(cuid())
   assetId String @map("asset_id")
   tagId   String @map("tag_id")
-
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@unique([assetId, tagId])
   @@map("asset_tags")
 }
 
 model ShareLink {
-  id        String    @id @default(cuid())
-  token     String    @unique
+  id        String       @id @default(cuid())
+  token     String       @unique
   name      String?
-  assetId   String?   @map("asset_id")
-  orgId     String    @map("org_id")
-  expiresAt DateTime? @map("expires_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-
-  asset Asset?       @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assetId   String?      @map("asset_id")
+  orgId     String       @map("org_id")
+  expiresAt DateTime?    @map("expires_at")
+  createdAt DateTime     @default(now()) @map("created_at")
+  asset     Asset?       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("share_links")
 }
 
 model Brief {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   title       String
   description String?
   objective   String?
   audience    String?
   tone        String?
   guidelines  String?
-  orgId       String   @map("org_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  assets BriefAsset[]
+  orgId       String       @map("org_id")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  assets      BriefAsset[]
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("briefs")
 }
@@ -262,29 +246,27 @@ model BriefAsset {
   id      String  @id @default(cuid())
   briefId String  @map("brief_id")
   assetId String  @map("asset_id")
-  role    String? // 'example', 'reference', etc.
+  role    String?
   notes   String?
-
-  brief Brief @relation(fields: [briefId], references: [id], onDelete: Cascade)
-  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  asset   Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  brief   Brief   @relation(fields: [briefId], references: [id], onDelete: Cascade)
 
   @@unique([briefId, assetId])
   @@map("brief_assets")
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
+  id         String       @id @default(cuid())
   action     String
   resource   String
-  resourceId String   @map("resource_id")
-  userId     String   @map("user_id")
-  orgId      String   @map("org_id")
+  resourceId String?      @map("resource_id")
+  userId     String       @map("user_id")
+  orgId      String       @map("org_id")
   metadata   Json?
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  user  User         @relation(fields: [userId], references: [id])
-  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  asset Asset?       @relation(fields: [resourceId], references: [id])
+  createdAt  DateTime     @default(now()) @map("created_at")
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  asset      Asset?       @relation(fields: [resourceId], references: [id])
+  user       User         @relation(fields: [userId], references: [id])
 
   @@index([resource, resourceId])
   @@index([userId])

@@ -3,6 +3,22 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 
+// OPTIONS handler for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+    const origin = request.headers.get('origin')
+
+    const response = new NextResponse(null, { status: 200 })
+
+    if (origin && (origin.includes('facebook.com') || origin.startsWith('chrome-extension://'))) {
+        response.headers.set('Access-Control-Allow-Origin', origin)
+        response.headers.set('Access-Control-Allow-Credentials', 'true')
+        response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With')
+    }
+
+    return response
+}
+
 const createBoardSchema = z.object({
     name: z.string().min(1, 'Board name is required').max(255, 'Board name too long'),
     description: z.string().max(1000, 'Description too long').optional(),
@@ -11,8 +27,48 @@ const createBoardSchema = z.object({
 // GET /api/v1/boards - List user's boards
 export async function GET(request: NextRequest) {
     try {
+        console.log('🔍 BOARDS API: Request headers:', {
+            cookie: request.headers.get('cookie'),
+            origin: request.headers.get('origin'),
+            'user-agent': request.headers.get('user-agent')
+        })
+
         const session = await auth()
-        if (!session?.user?.id) {
+        console.log('🔍 BOARDS API: Session result:', session ? 'Found session' : 'No session', session?.user?.id)
+
+        // If no session from NextAuth, try to manually validate the session token for Chrome extension
+        let userId = session?.user?.id
+
+        if (!userId) {
+            console.log('🔍 BOARDS API: No session from NextAuth, trying manual session validation...')
+            const cookieHeader = request.headers.get('cookie')
+            if (cookieHeader) {
+                const sessionTokenMatch = cookieHeader.match(/authjs\.session-token=([^;]+)/)
+                if (sessionTokenMatch) {
+                    const sessionToken = sessionTokenMatch[1]
+                    console.log('🔍 BOARDS API: Found session token, looking up in database...')
+
+                    try {
+                        const dbSession = await prisma.session.findUnique({
+                            where: { sessionToken },
+                            include: { user: true }
+                        })
+
+                        if (dbSession && dbSession.expires > new Date()) {
+                            userId = dbSession.user.id
+                            console.log('🎯 BOARDS API: Found valid session in database for user:', userId)
+                        } else {
+                            console.log('🚨 BOARDS API: Session token invalid or expired')
+                        }
+                    } catch (error) {
+                        console.error('🚨 BOARDS API: Error looking up session:', error)
+                    }
+                }
+            }
+        }
+
+        if (!userId) {
+            console.log('🚨 BOARDS API: Unauthorized - no valid session found')
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
         }
 
@@ -25,7 +81,7 @@ export async function GET(request: NextRequest) {
                 org: {
                     memberships: {
                         some: {
-                            userId: session.user.id,
+                            userId: userId,
                         },
                     },
                 },
@@ -44,7 +100,16 @@ export async function GET(request: NextRequest) {
             skip: offset,
         })
 
-        return NextResponse.json({ boards })
+        const response = NextResponse.json({ boards })
+
+        // Add CORS headers for Chrome extension
+        const origin = request.headers.get('origin')
+        if (origin && (origin.includes('facebook.com') || origin.startsWith('chrome-extension://'))) {
+            response.headers.set('Access-Control-Allow-Origin', origin)
+            response.headers.set('Access-Control-Allow-Credentials', 'true')
+        }
+
+        return response
     } catch (error) {
         console.error('Error fetching boards:', error)
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
