@@ -8,6 +8,8 @@ class AdBoardSaver {
         this.boardsCache = null // Cache for boards
         this.sessionValid = false // Session status
         this.isInitialized = false // Track initialization
+        this.extensionFailed = false // Track extension failure state
+        this.recoveryInProgress = false // Track recovery attempts
         this.init()
     }
 
@@ -21,37 +23,39 @@ class AdBoardSaver {
         console.log('🎯 AdBoard: Facebook Ad Library page detected')
         console.log('🔍 Current URL:', window.location.href)
 
-        // Check extension health first
-        const extensionHealthy = await this.checkExtensionHealth()
-        if (!extensionHealthy) {
-            console.warn('⚠️ AdBoard: Extension health check failed, showing error state')
-            this.handleExtensionFailure()
-            return
+        // Start with basic extension availability check
+        try {
+            // Check if chrome.runtime is available
+            if (!chrome.runtime || !chrome.runtime.id) {
+                console.warn('⚠️ AdBoard: Chrome runtime not available, will retry...')
+                this.showLoadingState()
+            } else {
+                // Try a simple ping to see if extension is responsive
+                const pingSuccess = await this.trySimplePing()
+                if (!pingSuccess) {
+                    console.warn('⚠️ AdBoard: Extension not responsive, will retry later')
+                    this.showLoadingState()
+                }
+            }
+        } catch (error) {
+            console.log('⏳ AdBoard: Extension check failed, will retry later:', error.message)
+            this.showLoadingState()
         }
 
-        // Pre-check session and load boards in background
-        await this.preloadData()
-
-        // Show status to user
-        this.showExtensionStatus()
-
-        // Wait for page to load, then start detection
-        setTimeout(() => {
-            console.log('🔄 AdBoard: Starting clean ad detection...')
-            this.detectAndLogAdCards()
-        }, 3000)
-
-        // Observe for new content
-        this.observeNewAds()
-
-        // Set up periodic health checks
-        this.setupHealthMonitoring()
+        // Continue with initialization regardless of extension status
+        // The health monitoring will handle recovery
+        this.continueInitialization()
     }
 
     setupHealthMonitoring() {
         // Check extension health every 30 seconds
         setInterval(async () => {
             try {
+                // Skip health checks if we're already in recovery mode
+                if (this.extensionFailed && this.recoveryInProgress) {
+                    return
+                }
+
                 const isHealthy = await this.checkExtensionHealth()
                 if (!isHealthy && !this.extensionFailed) {
                     console.warn('⚠️ AdBoard: Extension health degraded, showing error state')
@@ -59,12 +63,30 @@ class AdBoardSaver {
                 } else if (isHealthy && this.extensionFailed) {
                     console.log('✅ AdBoard: Extension health recovered')
                     this.extensionFailed = false
+                    this.recoveryInProgress = false
                     // Try to reinitialize
                     await this.preloadData()
                     this.showExtensionStatus()
                 }
             } catch (error) {
                 console.error('❌ AdBoard: Health monitoring error:', error)
+
+                // If it's an extension context error, handle it
+                if (error.message && (
+                    error.message.includes('Extension context invalidated') ||
+                    error.message.includes('Could not establish connection')
+                )) {
+                    this.handleExtensionContextInvalid()
+                }
+
+                // If it's a fetch error, don't treat it as fatal during health monitoring
+                if (error.message && (
+                    error.message.includes('Failed to fetch') ||
+                    error.message.includes('NetworkError')
+                )) {
+                    console.log('⏳ AdBoard: Fetch error during health check - will retry later')
+                    return
+                }
             }
         }, 30000) // 30 seconds
     }
@@ -96,8 +118,14 @@ class AdBoardSaver {
         } catch (error) {
             console.error('❌ AdBoard: Pre-loading failed:', error)
 
-            // Check if it's a storage/IO error
-            if (error.message && error.message.includes('IO error')) {
+            // Check for extension context issues first
+            if (error.message && (
+                error.message.includes('Extension context invalidated') ||
+                error.message.includes('Could not establish connection') ||
+                error.message.includes('Chrome runtime not available')
+            )) {
+                this.handleExtensionContextInvalid()
+            } else if (error.message && error.message.includes('IO error')) {
                 this.handleExtensionFailure()
             } else {
                 this.sessionValid = false
@@ -122,22 +150,75 @@ class AdBoardSaver {
             }
         } catch (error) {
             console.error('❌ AdBoard: Error loading boards:', error)
-            this.boardsCache = []
+
+            // Check for extension context issues
+            if (error.message && (
+                error.message.includes('Extension context invalidated') ||
+                error.message.includes('Could not establish connection') ||
+                error.message.includes('Chrome runtime not available')
+            )) {
+                // Don't set boardsCache here, let the extension context handler deal with it
+                throw error
+            } else {
+                this.boardsCache = []
+            }
         }
     }
 
     // Helper method to send messages with retry and error handling
     async sendMessageWithRetry(message, maxRetries = 3) {
+        // Check if chrome.runtime is available before attempting
+        if (!chrome.runtime || !chrome.runtime.id) {
+            console.warn('⚠️ AdBoard: Chrome runtime not available, cannot send message')
+            throw new Error('Chrome runtime not available')
+        }
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 console.log(`🔄 AdBoard: Sending message (attempt ${attempt}/${maxRetries}):`, message.type)
 
-                const response = await chrome.runtime.sendMessage(message)
+                // Use a timeout-based approach to prevent hanging
+                const response = await Promise.race([
+                    chrome.runtime.sendMessage(message),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Message timeout')), 5000)
+                    )
+                ])
+
                 console.log(`✅ AdBoard: Message sent successfully on attempt ${attempt}`)
                 return response
 
             } catch (error) {
                 console.error(`❌ AdBoard: Message send failed on attempt ${attempt}:`, error)
+
+                // Check for extension context invalidation first
+                if (error.message && (
+                    error.message.includes('Extension context invalidated') ||
+                    error.message.includes('Could not establish connection') ||
+                    error.message.includes('chrome.runtime is not defined')
+                )) {
+                    console.warn('⚠️ AdBoard: Extension context invalidated detected')
+                    this.handleExtensionContextInvalid()
+                    throw error // Don't retry, let caller handle it
+                }
+
+                // Check for timeout errors (common during extension reload)
+                if (error.message && (
+                    error.message.includes('Message timeout') ||
+                    error.message.includes('Failed to fetch') ||
+                    error.message.includes('NetworkError')
+                )) {
+                    console.warn('⚠️ AdBoard: Message timeout/fetch error detected (attempt ${attempt})')
+
+                    if (attempt === maxRetries) {
+                        console.error('❌ AdBoard: All retry attempts failed due to timeout/fetch errors')
+                        throw new Error('Extension communication timeout - extension may be reloading')
+                    }
+
+                    // Wait longer between retries for timeout errors
+                    await new Promise(resolve => setTimeout(resolve, 2000 * attempt))
+                    continue
+                }
 
                 // Check if it's a storage/IO error
                 if (error.message && error.message.includes('IO error')) {
@@ -205,6 +286,183 @@ class AdBoardSaver {
         this.showExtensionError()
     }
 
+    // Handle extension context invalidation (extension reloaded/updated)
+    handleExtensionContextInvalid() {
+        console.warn('⚠️ AdBoard: Extension context invalidated - extension may have been reloaded')
+
+        // Set flags to show extension needs reload
+        this.extensionFailed = true
+        this.sessionValid = false
+        this.isInitialized = true
+
+        // Show specific message about extension reload
+        this.showExtensionReloadMessage()
+
+        // Try to recover by checking if extension comes back
+        this.attemptExtensionRecovery()
+    }
+
+    // Attempt to recover from extension context invalidation
+    attemptExtensionRecovery() {
+        console.log('🔄 AdBoard: Attempting extension recovery...')
+        this.recoveryInProgress = true
+
+        // Check every 5 seconds if extension is back
+        const recoveryInterval = setInterval(async () => {
+            try {
+                // Check if chrome.runtime is available again
+                if (!chrome.runtime || !chrome.runtime.id) {
+                    console.log('⏳ AdBoard: Chrome runtime still not available...')
+                    return
+                }
+
+                // Try to ping the extension
+                const response = await this.sendMessageWithRetry({ type: 'PING' }, 1)
+                if (response?.success) {
+                    console.log('✅ AdBoard: Extension recovered! Reinitializing...')
+                    clearInterval(recoveryInterval)
+
+                    // Reset flags and reinitialize
+                    this.extensionFailed = false
+                    this.recoveryInProgress = false
+                    this.sessionValid = false
+                    this.isInitialized = false
+
+                    // Try to reinitialize
+                    this.init()
+                }
+            } catch (error) {
+                console.log('⏳ AdBoard: Extension still not responding...')
+            }
+        }, 5000) // Check every 5 seconds
+
+        // Stop checking after 2 minutes (24 attempts)
+        setTimeout(() => {
+            clearInterval(recoveryInterval)
+            this.recoveryInProgress = false
+            console.log('⏰ AdBoard: Extension recovery timeout reached')
+        }, 120000)
+    }
+
+    // Try a simple ping without complex error handling
+    async trySimplePing() {
+        try {
+            if (!chrome.runtime || !chrome.runtime.id) {
+                return false
+            }
+
+            // Use a simple timeout-based approach
+            const response = await Promise.race([
+                chrome.runtime.sendMessage({ type: 'PING' }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), 2000))
+            ])
+
+            return response && response.success
+        } catch (error) {
+            console.log('⏳ AdBoard: Simple ping failed:', error.message)
+            return false
+        }
+    }
+
+    // Show loading state while extension initializes
+    showLoadingState() {
+        const notification = document.createElement('div')
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #1877f2;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10001;
+            font-weight: 600;
+            max-width: 300px;
+            font-size: 14px;
+        `
+        notification.innerHTML = `
+            <div style="margin-bottom: 8px;">🔄 AdBoard Initializing</div>
+            <div style="font-size: 12px; opacity: 0.9;">
+                The extension is starting up. This may take a few seconds.
+            </div>
+        `
+
+        document.body.appendChild(notification)
+
+        // Remove after 15 seconds
+        setTimeout(() => {
+            notification.remove()
+        }, 15000)
+    }
+
+    // Continue with initialization after basic checks
+    async continueInitialization() {
+        // Set up periodic health checks first
+        this.setupHealthMonitoring()
+
+        // Listen for page visibility changes to help with recovery
+        this.setupPageVisibilityListener()
+
+        // Start ad detection immediately (don't wait for extension)
+        setTimeout(() => {
+            console.log('🔄 AdBoard: Starting clean ad detection...')
+            this.detectAndLogAdCards()
+        }, 3000)
+
+        // Observe for new content
+        this.observeNewAds()
+
+        // Try to initialize extension data in background
+        this.attemptExtensionInitialization()
+    }
+
+    // Attempt to initialize extension data in background
+    async attemptExtensionInitialization() {
+        // Wait a bit before trying
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+        try {
+            // Try to preload data
+            await this.preloadData()
+
+            // Show status to user
+            this.showExtensionStatus()
+
+            console.log('✅ AdBoard: Extension initialization completed')
+        } catch (error) {
+            console.log('⏳ AdBoard: Extension initialization failed, will retry later:', error.message)
+
+            // Don't show error state yet, just let health monitoring handle it
+            // The extension might still be starting up
+        }
+    }
+
+    // Listen for page visibility changes to help with recovery
+    setupPageVisibilityListener() {
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden && this.extensionFailed) {
+                console.log('🔄 AdBoard: Page became visible, checking extension health...')
+
+                // Wait a moment for the page to fully load
+                setTimeout(async () => {
+                    try {
+                        const isHealthy = await this.checkExtensionHealth()
+                        if (isHealthy) {
+                            console.log('✅ AdBoard: Extension recovered after page visibility change')
+                            this.extensionFailed = false
+                            this.recoveryInProgress = false
+                            await this.preloadData()
+                            this.showExtensionStatus()
+                        }
+                    } catch (error) {
+                        console.log('⏳ AdBoard: Extension still not responding after page visibility change')
+                    }
+                }, 1000)
+            }
+        })
+    }
+
     showExtensionError() {
         // Create a notification about the extension issue
         const notification = document.createElement('div')
@@ -236,6 +494,55 @@ class AdBoardSaver {
         setTimeout(() => {
             notification.remove()
         }, 10000)
+    }
+
+    showExtensionReloadMessage() {
+        // Create a notification about extension reload
+        const notification = document.createElement('div')
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #e74c3c;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10001;
+            font-weight: 600;
+            max-width: 350px;
+            font-size: 14px;
+        `
+        notification.innerHTML = `
+            <div style="margin-bottom: 8px;">🔄 AdBoard Extension Reloaded</div>
+            <div style="font-size: 12px; opacity: 0.9; margin-bottom: 12px;">
+                The extension has been reloaded or updated. 
+                Please refresh this page to reconnect.
+            </div>
+            <button id="refreshPageBtn" style="
+                background: white; 
+                color: #e74c3c; 
+                border: none; 
+                padding: 6px 12px; 
+                border-radius: 4px; 
+                cursor: pointer; 
+                font-size: 12px; 
+                font-weight: 600;
+            ">Refresh Page</button>
+        `
+
+        // Add refresh button functionality
+        const refreshBtn = notification.querySelector('#refreshPageBtn')
+        refreshBtn.addEventListener('click', () => {
+            window.location.reload()
+        })
+
+        document.body.appendChild(notification)
+
+        // Remove after 30 seconds (longer for reload message)
+        setTimeout(() => {
+            notification.remove()
+        }, 30000)
     }
 
     isAdLibraryPage() {
@@ -947,10 +1254,62 @@ class AdBoardSaver {
         return hash
     }
 
+    // Wait for extension to be fully ready with retries
+    async waitForExtensionReady(maxAttempts = 5) {
+        console.log('🔄 AdBoard: Waiting for extension to be ready...')
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                console.log(`🔄 AdBoard: Extension readiness check attempt ${attempt}/${maxAttempts}`)
+
+                // Check if chrome.runtime is available
+                if (!chrome.runtime || !chrome.runtime.id) {
+                    console.log(`⏳ AdBoard: Chrome runtime not available yet (attempt ${attempt})`)
+                    await new Promise(resolve => setTimeout(resolve, 1000))
+                    continue
+                }
+
+                // Try to ping the extension
+                const response = await this.sendMessageWithRetry({ type: 'PING' }, 1)
+                if (response?.success) {
+                    console.log('✅ AdBoard: Extension is ready!')
+                    return true
+                }
+
+                console.log(`⏳ AdBoard: Extension not responding yet (attempt ${attempt})`)
+                await new Promise(resolve => setTimeout(resolve, 1000))
+
+            } catch (error) {
+                console.log(`⏳ AdBoard: Extension readiness check failed (attempt ${attempt}):`, error.message)
+
+                // If it's a context invalidation error, don't retry
+                if (error.message && (
+                    error.message.includes('Extension context invalidated') ||
+                    error.message.includes('Could not establish connection')
+                )) {
+                    console.warn('⚠️ AdBoard: Extension context invalidated during readiness check')
+                    return false
+                }
+
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+        }
+
+        console.warn('⚠️ AdBoard: Extension not ready after all attempts')
+        return false
+    }
+
     // Check if extension is working properly
     async checkExtensionHealth() {
         try {
             console.log('🔍 AdBoard: Checking extension health...')
+
+            // Check if chrome.runtime is available and valid
+            if (!chrome.runtime || !chrome.runtime.id) {
+                console.warn('⚠️ AdBoard: Chrome runtime not available')
+                return false
+            }
 
             // Try a simple ping first
             const pingResponse = await this.sendMessageWithRetry({ type: 'PING' })
@@ -963,6 +1322,29 @@ class AdBoardSaver {
             }
         } catch (error) {
             console.error('❌ AdBoard: Extension health check error:', error)
+
+            // Check for specific extension context errors
+            if (error.message && (
+                error.message.includes('Extension context invalidated') ||
+                error.message.includes('Could not establish connection') ||
+                error.message.includes('chrome.runtime is not defined')
+            )) {
+                console.warn('⚠️ AdBoard: Extension context is invalid - extension may have been reloaded')
+                this.handleExtensionContextInvalid()
+                return false
+            }
+
+            // Check for fetch errors (common during extension reload)
+            if (error.message && (
+                error.message.includes('Failed to fetch') ||
+                error.message.includes('NetworkError') ||
+                error.message.includes('ERR_FAILED')
+            )) {
+                console.warn('⚠️ AdBoard: Network/fetch error detected - extension may still be initializing')
+                // Don't treat this as a fatal error, just return false to retry later
+                return false
+            }
+
             return false
         }
     }

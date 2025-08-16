@@ -6,6 +6,7 @@ let boardsCache = []
 let sessionValid = false
 let lastBoardsFetch = 0
 let lastSessionCheck = 0
+let isExtensionReady = false
 
 // Cache durations (in milliseconds)
 const BOARDS_CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
@@ -14,11 +15,15 @@ const SESSION_CACHE_DURATION = 1 * 60 * 1000 // 1 minute
 // Pre-load data on extension startup
 chrome.runtime.onStartup.addListener(() => {
     console.log('🚀 AdBoard: Extension starting up...')
+    // Mark as ready immediately for basic operations like PING
+    isExtensionReady = true
     preloadData()
 })
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log('🚀 AdBoard: Extension installed...')
+    // Mark as ready immediately for basic operations like PING
+    isExtensionReady = true
     preloadData()
 })
 
@@ -28,8 +33,11 @@ async function preloadData() {
         await checkSessionValidity()
         await loadBoardsFromAPI()
         console.log('✅ AdBoard: Pre-loading completed')
+        isExtensionReady = true
     } catch (error) {
         console.error('❌ AdBoard: Pre-loading failed:', error)
+        // Still mark as ready even if preloading fails
+        isExtensionReady = true
     }
 }
 
@@ -247,6 +255,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
         console.log('🎯 Background: Received message:', request.type, 'from tab:', sender.tab?.id)
 
+        // Check if extension is ready (except for PING)
+        if (request.type !== 'PING' && !isExtensionReady) {
+            console.log('⚠️ Background: Extension not ready yet, rejecting message:', request.type)
+            sendResponse({ success: false, error: 'Extension not ready yet' })
+            return false
+        }
+
         if (request.type === 'LOAD_BOARDS') {
             console.log('🎯 Background: Processing LOAD_BOARDS request')
             handleLoadBoards()
@@ -256,7 +271,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 })
                 .catch(error => {
                     console.error('🚨 Background: LOAD_BOARDS error:', error)
-                    sendResponse({ success: false, error: error.message })
+                    // Don't send error details that might cause "Failed to fetch"
+                    sendResponse({ success: false, error: 'Failed to load boards' })
                 })
             return true // Will respond asynchronously
         }
@@ -270,7 +286,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 })
                 .catch(error => {
                     console.error('🚨 Background: SAVE_AD error:', error)
-                    sendResponse({ success: false, error: error.message })
+                    // Don't send error details that might cause "Failed to fetch"
+                    sendResponse({ success: false, error: 'Failed to save ad' })
                 })
             return true // Will respond asynchronously
         }
@@ -284,9 +301,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 })
                 .catch(error => {
                     console.error('🚨 Background: CHECK_SESSION error:', error)
-                    sendResponse({ success: false, error: error.message })
+                    // Don't send error details that might cause "Failed to fetch"
+                    sendResponse({ success: false, error: 'Session check failed' })
                 })
             return true // Will respond asynchronously
+        }
+
+        if (request.type === 'PING') {
+            console.log('🎯 Background: Processing PING request')
+            // Simple ping response to check if extension is ready
+            sendResponse({ success: true, data: { message: 'pong', timestamp: Date.now() } })
+            return false // Synchronous response
         }
 
         console.log('⚠️ Background: Unknown message type:', request.type)
@@ -294,7 +319,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     } catch (error) {
         console.error('🚨 Background: Error processing message:', error)
-        sendResponse({ success: false, error: error.message })
+        // Don't send error details that might cause "Failed to fetch"
+        sendResponse({ success: false, error: 'Internal error' })
     }
 })
 
