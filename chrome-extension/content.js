@@ -145,21 +145,60 @@ class AdBoardSaver {
 
         // Look for ad text in Facebook's ad copy containers
         const adTextSelectors = [
+            'div[style*="white-space: pre-wrap"]', // Direct div with pre-wrap (most reliable)
             'div[style*="white-space: pre-wrap"] span', // Main ad copy
             'div[tabindex="0"][role="button"] div span', // Alternative ad copy structure
             'span[style*="white-space"]', // Any span with white-space styling
-            'div._4ik4 span' // Facebook's text container class
+            'div._4ik4 div[style*="white-space: pre-wrap"]', // Facebook's text container with pre-wrap
+            'div._4ik4 span', // Facebook's text container class
+            'div[tabindex="0"][role="button"] div[style*="white-space: pre-wrap"]' // Button with pre-wrap
         ]
 
         for (const selector of adTextSelectors) {
             const elements = container.querySelectorAll(selector)
             for (const element of elements) {
-                const elementText = element.textContent?.trim() || ''
+                // Use innerHTML to preserve line breaks and formatting
+                let elementText = ''
+
+                // Try to get text with line breaks preserved
+                if (element.innerHTML) {
+                    // Convert <br> tags to actual line breaks
+                    elementText = element.innerHTML
+                        .replace(/<br\s*\/?>/gi, '\n') // Convert <br> to \n
+                        .replace(/<br\s*\/?>/gi, '\n') // Handle self-closing <br/>
+                        .replace(/<[^>]*>/g, '') // Remove all other HTML tags
+                        .trim()
+                } else if (element.textContent) {
+                    // Fallback to textContent if no innerHTML
+                    elementText = element.textContent.trim()
+                } else {
+                    elementText = ''
+                }
+
+                // Clean up multiple consecutive line breaks
+                if (elementText) {
+                    elementText = elementText
+                        .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace 3+ line breaks with 2
+                        .replace(/\n\s*\n/g, '\n\n') // Replace 2 line breaks with 2 (clean)
+                        .trim()
+                }
+
                 // Look for substantial text that doesn't contain metadata
                 if (elementText && elementText.length > 20 && elementText.length < 1000 &&
                     !elementText.includes('Library ID') && !elementText.includes('Sponsored') &&
                     !elementText.includes('Started running') && !elementText.includes('See ad details') &&
                     !elementText.includes('This ad has') && !elementText.match(/^\d+\s+ads/)) {
+
+                    // Debug: Log the text extraction process
+                    console.log('🔍 Found potential ad text:', {
+                        selector: selector,
+                        originalLength: element.innerHTML?.length || 0,
+                        processedLength: elementText.length,
+                        hasLineBreaks: elementText.includes('\n'),
+                        lineBreakCount: (elementText.match(/\n/g) || []).length,
+                        sampleText: elementText.substring(0, 100) + '...'
+                    })
+
                     adText = elementText
                     break
                 }
@@ -252,6 +291,7 @@ class AdBoardSaver {
             brandName,
             adTextLength: adText.length,
             adText: adText,
+            adTextWithBreaks: adText.replace(/\n/g, '\\n'), // Show line breaks in console
             mediaCount: mediaUrls.length,
             mediaTypes: mediaUrls.map(m => `${m.type}(${m.source})`).join(', '),
             mainMediaUrl: mediaUrls[0]?.url || 'none',
@@ -306,6 +346,7 @@ class AdBoardSaver {
             display: flex;
             gap: 8px;
             align-items: center;
+            justify-content: center;
         `
 
         // Create single AdBoard save button
@@ -352,7 +393,14 @@ class AdBoardSaver {
 
         // Insert after the target button's parent container
         const insertionPoint = targetButton.closest('div[role="none"]') || targetButton.parentElement
-        insertionPoint.parentElement.insertBefore(saveButtonContainer, insertionPoint.nextSibling)
+
+        // Make sure we have a valid insertion point
+        if (insertionPoint && insertionPoint.parentElement) {
+            insertionPoint.parentElement.insertBefore(saveButtonContainer, insertionPoint.nextSibling)
+        } else {
+            // Fallback: insert at the end of the container
+            container.appendChild(saveButtonContainer)
+        }
 
         console.log(`💾 Injected save buttons for ad: ${libraryId}`)
     }
