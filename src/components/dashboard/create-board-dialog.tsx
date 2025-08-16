@@ -49,7 +49,7 @@ export function CreateBoardDialog() {
 
     return (
         <>
-            <Button onClick={() => setIsOpen(true)}>
+            <Button onClick={() => setIsOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
@@ -108,10 +108,11 @@ export function CreateBoardDialog() {
                                     variant="outline"
                                     onClick={() => setIsOpen(false)}
                                     disabled={isLoading}
+                                    className="border-gray-300 text-gray-700 hover:bg-gray-50"
                                 >
                                     Cancel
                                 </Button>
-                                <Button type="submit" disabled={isLoading || !name.trim()}>
+                                <Button type="submit" disabled={isLoading || !name.trim()} className="bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-400">
                                     {isLoading ? 'Creating...' : 'Create Board'}
                                 </Button>
                             </div>

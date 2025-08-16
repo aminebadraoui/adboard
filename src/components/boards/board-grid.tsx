@@ -33,17 +33,16 @@ interface BoardGridProps {
 export function BoardGrid({ board }: BoardGridProps) {
     const [selectedAd, setSelectedAd] = useState<string | null>(null)
     const [deletingAsset, setDeletingAsset] = useState<string | null>(null)
+    const [playingVideo, setPlayingVideo] = useState<boolean>(false)
     const router = useRouter()
 
     const openAdPreview = (assetId: string) => {
         setSelectedAd(assetId)
     }
 
-    const handleVideoPlay = (asset: Asset & { files: AssetFile[] }) => {
-        const videoFile = asset.files.find(f => f.type === 'video')
-        if (videoFile) {
-            window.open(videoFile.url, '_blank')
-        }
+    const handleMediaPreview = (asset: Asset & { files: AssetFile[] }) => {
+        setSelectedAd(asset.id)
+        setPlayingVideo(false) // Reset video playing state when opening modal
     }
 
     const handleDeleteAsset = async (assetId: string) => {
@@ -93,7 +92,7 @@ export function BoardGrid({ board }: BoardGridProps) {
                             <div className="relative">
                                 <div
                                     className="aspect-[4/5] bg-gray-100 relative overflow-hidden cursor-pointer"
-                                    onClick={() => hasVideo ? handleVideoPlay(asset) : openAdPreview(asset.id)}
+                                    onClick={() => handleMediaPreview(asset)}
                                 >
                                     {primaryImage ? (
                                         <>
@@ -220,24 +219,163 @@ export function BoardGrid({ board }: BoardGridProps) {
                 })}
             </div>
 
-            {/* Ad Preview Modal - TODO: Implement in next step */}
-            {selectedAd && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-auto shadow-2xl">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-lg font-semibold text-gray-900">Ad Preview</h2>
-                            <Button
-                                variant="ghost"
-                                onClick={() => setSelectedAd(null)}
-                                className="h-8 w-8 p-0 text-gray-500 hover:text-gray-700"
-                            >
-                                ✕
-                            </Button>
+            {/* Ad Preview Modal */}
+            {selectedAd && (() => {
+                const selectedAsset = board.assets.find(ba => ba.asset.id === selectedAd)?.asset
+                if (!selectedAsset) return null
+
+                const videoPoster = selectedAsset.files.find(f => f.type === 'image' && f.cloudinaryId?.includes('video_poster'))
+                const primaryImage = videoPoster || selectedAsset.files.find(f => f.type === 'image') || selectedAsset.files[0]
+                const videoFile = selectedAsset.files.find(f => f.type === 'video')
+                const hasVideo = selectedAsset.files.some(f => f.type === 'video')
+
+                return (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-auto shadow-2xl">
+                            {/* Header */}
+                            <div className="flex justify-between items-center p-6 border-b border-gray-200">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-gray-900">{selectedAsset.headline || 'Ad Preview'}</h2>
+                                    {selectedAsset.brandName && (
+                                        <p className="text-sm text-gray-600 mt-1">{selectedAsset.brandName}</p>
+                                    )}
+                                </div>
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => setSelectedAd(null)}
+                                    className="h-10 w-10 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                                >
+                                    ✕
+                                </Button>
+                            </div>
+
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Media Preview */}
+                                    <div className="space-y-4">
+                                        {hasVideo && videoFile && playingVideo ? (
+                                            /* Video Player */
+                                            <div className="aspect-[4/5]">
+                                                <video
+                                                    controls
+                                                    autoPlay
+                                                    className="w-full h-full rounded-lg object-cover"
+                                                    poster={primaryImage?.url}
+                                                >
+                                                    <source src={videoFile.url} type="video/mp4" />
+                                                    Your browser does not support the video tag.
+                                                </video>
+                                            </div>
+                                        ) : primaryImage && (
+                                            /* Image/Video Poster */
+                                            <div className="relative aspect-[4/5] bg-gray-100 rounded-lg overflow-hidden">
+                                                <Image
+                                                    src={primaryImage.url}
+                                                    alt={selectedAsset.headline || 'Ad media'}
+                                                    fill
+                                                    className="object-cover"
+                                                    sizes="(max-width: 768px) 100vw, 50vw"
+                                                />
+                                                {hasVideo && videoFile && !playingVideo && (
+                                                    <div
+                                                        className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer"
+                                                        onClick={() => setPlayingVideo(true)}
+                                                    >
+                                                        <div className="bg-white/90 backdrop-blur-sm rounded-full p-4 hover:bg-white hover:scale-110 transition-all duration-300 shadow-lg">
+                                                            <Play className="w-8 h-8 text-gray-800 fill-current" />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Actions */}
+                                        <div className="flex gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => window.open(selectedAsset.adUrl, '_blank')}
+                                                className="flex-1 bg-blue-600 border-blue-600 text-white hover:bg-blue-700 hover:border-blue-700"
+                                            >
+                                                <ExternalLink className="w-4 h-4 mr-2" />
+                                                View Original
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => handleDeleteAsset(selectedAsset.id)}
+                                                disabled={deletingAsset === selectedAsset.id}
+                                                className="bg-red-600 border-red-600 text-white hover:bg-red-700 hover:border-red-700 disabled:bg-red-400"
+                                            >
+                                                <Trash2 className="w-4 h-4 mr-2" />
+                                                {deletingAsset === selectedAsset.id ? 'Removing...' : 'Remove'}
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    {/* Ad Details */}
+                                    <div className="space-y-4">
+                                        {/* Ad Text */}
+                                        {selectedAsset.adText && (
+                                            <div>
+                                                <h3 className="font-medium text-gray-900 mb-2">Ad Text</h3>
+                                                <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
+                                                    {selectedAsset.adText}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* Description */}
+                                        {selectedAsset.description && (
+                                            <div>
+                                                <h3 className="font-medium text-gray-900 mb-2">Description</h3>
+                                                <p className="text-gray-700">
+                                                    {selectedAsset.description}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* Tags */}
+                                        {selectedAsset.tags.length > 0 && (
+                                            <div>
+                                                <h3 className="font-medium text-gray-900 mb-2">Tags</h3>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedAsset.tags.map((assetTag) => (
+                                                        <span
+                                                            key={assetTag.id}
+                                                            className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800"
+                                                        >
+                                                            <TagIcon className="w-3 h-3 mr-1" />
+                                                            {assetTag.tag.name}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Metadata */}
+                                        <div className="pt-4 border-t border-gray-200">
+                                            <div className="grid grid-cols-2 gap-4 text-sm">
+                                                <div>
+                                                    <span className="font-medium text-gray-500">Brand:</span>
+                                                    <p className="text-gray-900">{selectedAsset.brandName || 'Unknown'}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="font-medium text-gray-500">Added:</span>
+                                                    <p className="text-gray-900">
+                                                        {formatDistanceToNow(new Date(selectedAsset.createdAt), { addSuffix: true })}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <p className="text-gray-600">Preview modal will be implemented next!</p>
                     </div>
-                </div>
-            )}
+                )
+            })()}
         </>
     )
 }

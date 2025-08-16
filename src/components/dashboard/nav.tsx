@@ -38,11 +38,6 @@ export function DashboardNav() {
 
                     {/* Actions */}
                     <div className="flex items-center space-x-3">
-                        <Button variant="default" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white border-0">
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add Ad
-                        </Button>
-
                         <div className="flex items-center space-x-2">
                             <Button variant="ghost" size="icon" asChild className="text-gray-300 hover:text-white hover:bg-gray-800">
                                 <a href="/dashboard/settings">

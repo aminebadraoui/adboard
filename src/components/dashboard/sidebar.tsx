@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -18,6 +18,13 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
+interface Board {
+    id: string
+    name: string
+    description: string | null
+    createdAt: string
+}
+
 const navigation = [
     { name: 'My Boards', href: '/dashboard', icon: Folder },
     { name: 'All Ads', href: '/dashboard/ads', icon: Layers },
@@ -30,15 +37,29 @@ const settingsNavigation = [
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ]
 
-const boards = [
-    { id: '1', name: 'My First Board', color: '#3B82F6' },
-    { id: '2', name: 'E-commerce Ads', color: '#10B981' },
-    { id: '3', name: 'SaaS Inspiration', color: '#F59E0B' },
-]
-
 export function Sidebar() {
     const pathname = usePathname()
     const [boardsExpanded, setBoardsExpanded] = useState(true)
+    const [boards, setBoards] = useState<Board[]>([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        const fetchBoards = async () => {
+            try {
+                const response = await fetch('/api/v1/boards')
+                if (response.ok) {
+                    const data = await response.json()
+                    setBoards(data.boards || [])
+                }
+            } catch (error) {
+                console.error('Failed to fetch boards:', error)
+            } finally {
+                setLoading(false)
+            }
+        }
+
+        fetchBoards()
+    }, [])
 
     return (
         <aside className="w-64 bg-gray-900 border-r border-gray-700 min-h-[calc(100vh-73px)]">
@@ -89,27 +110,30 @@ export function Sidebar() {
 
                     {boardsExpanded && (
                         <div className="mt-2 space-y-1">
-                            {boards.map((board) => {
-                                const isActive = pathname === `/dashboard/boards/${board.id}`
-                                return (
-                                    <Link
-                                        key={board.id}
-                                        href={`/dashboard/boards/${board.id}`}
-                                        className={cn(
-                                            'flex items-center px-3 py-2 text-sm rounded-md transition-colors ml-4',
-                                            isActive
-                                                ? 'bg-blue-600 text-white'
-                                                : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-                                        )}
-                                    >
-                                        <div
-                                            className="mr-3 h-3 w-3 rounded-full"
-                                            style={{ backgroundColor: board.color }}
-                                        />
-                                        {board.name}
-                                    </Link>
-                                )
-                            })}
+                            {loading ? (
+                                <div className="ml-4 text-gray-400 text-sm">Loading...</div>
+                            ) : boards.length > 0 ? (
+                                boards.map((board) => {
+                                    const isActive = pathname === `/dashboard/boards/${board.id}`
+                                    return (
+                                        <Link
+                                            key={board.id}
+                                            href={`/dashboard/boards/${board.id}`}
+                                            className={cn(
+                                                'flex items-center px-3 py-2 text-sm rounded-md transition-colors ml-4',
+                                                isActive
+                                                    ? 'bg-blue-600 text-white'
+                                                    : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                                            )}
+                                        >
+                                            <div className="mr-3 h-3 w-3 rounded-full bg-blue-500" />
+                                            {board.name}
+                                        </Link>
+                                    )
+                                })
+                            ) : (
+                                <div className="ml-4 text-gray-500 text-sm">No boards yet</div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -145,11 +169,7 @@ export function Sidebar() {
                         Quick Actions
                     </h3>
                     <div className="space-y-2">
-                        <Button variant="outline" size="sm" className="w-full justify-start bg-transparent border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-gray-500">
-                            <Plus className="mr-2 h-4 w-4" />
-                            Add from URL
-                        </Button>
-                        <Button variant="outline" size="sm" className="w-full justify-start bg-transparent border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-gray-500">
+                        <Button variant="outline" size="sm" className="w-full justify-start bg-blue-600 border-blue-600 text-white hover:bg-blue-700 hover:border-blue-700">
                             <Share2 className="mr-2 h-4 w-4" />
                             Install Extension
                         </Button>

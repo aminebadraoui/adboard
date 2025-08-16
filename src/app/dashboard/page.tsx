@@ -2,7 +2,7 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { BoardsGrid } from '@/components/dashboard/boards-grid'
 import { CreateBoardDialog } from '@/components/dashboard/create-board-dialog'
-import { AddAdDialog } from '@/components/dashboard/add-ad-dialog'
+
 
 export default async function DashboardPage() {
     const session = await auth()
@@ -40,7 +40,6 @@ export default async function DashboardPage() {
                     <p className="text-gray-600">Create and organize Facebook ad mood boards</p>
                 </div>
                 <div className="flex gap-3">
-                    <AddAdDialog />
                     <CreateBoardDialog />
                 </div>
             </div>

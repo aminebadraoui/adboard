@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { BoardHeader } from '@/components/boards/board-header'
 import { BoardGrid } from '@/components/boards/board-grid'
-import { AddAdToBoard } from '@/components/boards/add-ad-to-board'
+
 
 interface BoardPageProps {
     params: Promise<{
@@ -75,7 +75,7 @@ export default async function BoardPage({ params }: BoardPageProps) {
                         Collect and organize Facebook ads for inspiration
                     </p>
                 </div>
-                <AddAdToBoard boardId={board.id} />
+
             </div>
 
             {/* Board Content */}
@@ -88,7 +88,7 @@ export default async function BoardPage({ params }: BoardPageProps) {
                     </div>
                     <h3 className="text-lg font-medium text-gray-900 mb-2">No ads yet</h3>
                     <p className="text-gray-600 mb-6">Start building your mood board by adding Facebook ads</p>
-                    <AddAdToBoard boardId={board.id} />
+
                 </div>
             ) : (
                 <BoardGrid board={board} />
