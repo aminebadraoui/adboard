@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "AdBoard - Facebook Ads Saver",
     "version": "1.0.0",
-    "description": "Save Facebook ads to your AdBoard collections",
+    "description": "Save Facebook ads to your AdBoard collections with instant UI and smart caching",
     "permissions": [
         "activeTab",
         "storage",
@@ -30,7 +30,8 @@
         }
     ],
     "background": {
-        "service_worker": "background.js"
+        "service_worker": "background.js",
+        "type": "module"
     },
     "action": {
         "default_popup": "popup.html",

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { auth } from '@/lib/auth'
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
         // Check database connection
         await prisma.$queryRaw`SELECT 1`
@@ -26,11 +27,26 @@ export async function GET() {
             )
         }
 
+        // Check session validity if cookie is present
+        const session = await auth()
+        const hasValidSession = !!session
+
+        console.log('🔍 Health check - Session info:', {
+            hasSession: !!session,
+            sessionUser: session?.user?.email,
+            sessionUserId: session?.user?.id
+        })
+
         return NextResponse.json({
             status: 'healthy',
             timestamp: new Date().toISOString(),
             database: 'connected',
-            environment: process.env.NODE_ENV
+            environment: process.env.NODE_ENV,
+            session: hasValidSession ? 'valid' : 'none',
+            sessionDetails: hasValidSession ? {
+                userEmail: session.user?.email,
+                userId: session.user?.id
+            } : null
         })
     } catch (error) {
         console.error('Health check failed:', error)
@@ -43,5 +59,35 @@ export async function GET() {
             },
             { status: 500 }
         )
+    }
+}
+
+// POST method for testing session validation
+export async function POST(request: Request) {
+    try {
+        const body = await request.json()
+        const { testSession } = body
+
+        if (testSession) {
+            // Check session validity
+            const session = await auth()
+            const hasValidSession = !!session
+
+            return NextResponse.json({
+                test: 'session',
+                hasValidSession,
+                session: hasValidSession ? 'valid' : 'none',
+                sessionDetails: hasValidSession ? {
+                    userEmail: session.user?.email,
+                    userId: session.user?.id
+                } : null,
+                cookies: request.headers.get('cookie') || 'none'
+            })
+        }
+
+        return NextResponse.json({ error: 'Invalid test request' }, { status: 400 })
+    } catch (error) {
+        console.error('Session test failed:', error)
+        return NextResponse.json({ error: 'Session test failed' }, { status: 500 })
     }
 }

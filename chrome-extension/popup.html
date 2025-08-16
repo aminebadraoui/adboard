@@ -3,115 +3,139 @@
 
 <head>
     <meta charset="utf-8">
+    <title>AdBoard Saver</title>
     <style>
         body {
             width: 300px;
-            padding: 20px;
-            margin: 0;
+            padding: 16px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .logo {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: bold;
+            color: #1877f2;
             margin-bottom: 8px;
         }
 
-        .subtitle {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .content {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }
-
         .status {
+            padding: 12px;
+            border-radius: 6px;
             margin-bottom: 16px;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
             font-size: 14px;
         }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #10b981;
+        .status.loading {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
         }
 
-        .status-dot.inactive {
-            background: #f59e0b;
+        .status.success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
         }
 
-        .buttons {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
         }
 
-        .btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.3);
+        .status.warning {
+            background: #fff3e0;
+            color: #ef6c00;
+            border: 1px solid #ffcc02;
+        }
+
+        .button {
+            width: 100%;
+            padding: 10px;
+            background: #1877f2;
             color: white;
-            padding: 10px 16px;
-            border-radius: 8px;
+            border: none;
+            border-radius: 6px;
             cursor: pointer;
-            text-decoration: none;
-            text-align: center;
             font-size: 14px;
-            transition: all 0.2s;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
 
-        .btn:hover {
-            background: rgba(255, 255, 255, 0.3);
+        .button:hover {
+            background: #166fe5;
         }
 
-        .btn-primary {
-            background: rgba(255, 255, 255, 0.9);
-            color: #667eea;
-            font-weight: 500;
+        .button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
 
-        .btn-primary:hover {
-            background: white;
+        .button.secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        .button.secondary:hover {
+            background: #e8e8e8;
+        }
+
+        .info {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            margin-top: 12px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #1877f2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
 
 <body>
     <div class="header">
-        <div class="logo">📌 AdBoard</div>
-        <div class="subtitle">Save Facebook ads to your boards</div>
+        <div class="logo">AdBoard</div>
+        <div>Facebook Ads Saver</div>
     </div>
 
-    <div class="content">
-        <div class="status">
-            <div class="status-indicator">
-                <div class="status-dot" id="status-dot"></div>
-                <span id="status-text">Checking page...</span>
-            </div>
-        </div>
+    <div id="status" class="status loading">
+        <div id="statusText">Checking status...</div>
+    </div>
 
-        <div class="buttons">
-            <a href="#" class="btn btn-primary" id="dashboard-btn">Open Dashboard</a>
-            <a href="#" class="btn" id="save-btn" style="display: none;">Save Current Ad</a>
-            <a href="#" class="btn" id="help-btn">How to Use</a>
-        </div>
+    <button id="refreshBtn" class="button" disabled>
+        <span id="refreshText">Refresh</span>
+    </button>
+
+    <button id="dashboardBtn" class="button secondary">
+        Open Dashboard
+    </button>
+
+    <div class="info">
+        Click the extension icon on Facebook Ad Library pages to save ads
     </div>
 
     <script src="popup.js"></script>

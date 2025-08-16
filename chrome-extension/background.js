@@ -1,154 +1,310 @@
-// AdBoard Chrome Extension - Background Script
-// Handles API calls with proper authentication
-
+// AdBoard Extension Background Script
 const ADBOARD_URL = 'http://localhost:3000' // Change for production
 
-// Listen for messages from content script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log('🎯 Background: Received message:', request.type, 'from tab:', sender.tab?.id)
+// Global cache for boards and session status
+let boardsCache = []
+let sessionValid = false
+let lastBoardsFetch = 0
+let lastSessionCheck = 0
 
-    if (request.type === 'LOAD_BOARDS') {
-        console.log('🎯 Background: Processing LOAD_BOARDS request')
-        loadBoards()
-            .then(response => {
-                console.log('🎯 Background: LOAD_BOARDS success, sending response')
-                sendResponse({ success: true, data: response })
-            })
-            .catch(error => {
-                console.error('🚨 Background: LOAD_BOARDS error:', error)
-                sendResponse({ success: false, error: error.message })
-            })
-        return true // Will respond asynchronously
-    }
+// Cache durations (in milliseconds)
+const BOARDS_CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+const SESSION_CACHE_DURATION = 1 * 60 * 1000 // 1 minute
 
-    if (request.type === 'SAVE_AD') {
-        console.log('🎯 Background: Processing SAVE_AD request')
-        saveAd(request.data)
-            .then(response => {
-                console.log('🎯 Background: SAVE_AD success, sending response')
-                sendResponse({ success: true, data: response })
-            })
-            .catch(error => {
-                console.error('🚨 Background: SAVE_AD error:', error)
-                sendResponse({ success: false, error: error.message })
-            })
-        return true // Will respond asynchronously
-    }
-
-    console.log('⚠️ Background: Unknown message type:', request.type)
+// Pre-load data on extension startup
+chrome.runtime.onStartup.addListener(() => {
+    console.log('🚀 AdBoard: Extension starting up...')
+    preloadData()
 })
 
-async function loadBoards() {
-    console.log('🎯 Background: Loading boards from', `${ADBOARD_URL}/api/v1/boards`)
+chrome.runtime.onInstalled.addListener(() => {
+    console.log('🚀 AdBoard: Extension installed...')
+    preloadData()
+})
 
-    // Get ALL cookies for debugging
-    const allCookies = await chrome.cookies.getAll({ url: ADBOARD_URL })
-    console.log('🔍 Background: All cookies for localhost:3000:', allCookies.map(c => c.name))
-
-    // Try to find NextAuth session cookie (multiple possible names)
-    const possibleNames = [
-        'next-auth.session-token',
-        '__Secure-next-auth.session-token',
-        'authjs.session-token',
-        '__Secure-authjs.session-token'
-    ]
-
-    let sessionCookie = null
-    for (const name of possibleNames) {
-        const cookies = await chrome.cookies.getAll({ url: ADBOARD_URL, name })
-        if (cookies.length > 0) {
-            sessionCookie = cookies[0]
-            console.log(`🎯 Background: Found auth cookie: ${name}`)
-            break
-        }
+async function preloadData() {
+    console.log('🚀 AdBoard: Pre-loading data...')
+    try {
+        await checkSessionValidity()
+        await loadBoardsFromAPI()
+        console.log('✅ AdBoard: Pre-loading completed')
+    } catch (error) {
+        console.error('❌ AdBoard: Pre-loading failed:', error)
     }
-
-    let cookieHeader = ''
-    if (sessionCookie) {
-        cookieHeader = `${sessionCookie.name}=${sessionCookie.value}`
-    } else {
-        console.log('⚠️ Background: No auth cookie found')
-        // Send all cookies just in case
-        cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join('; ')
-        console.log('🔄 Background: Sending all cookies as fallback')
-    }
-
-    const response = await fetch(`${ADBOARD_URL}/api/v1/boards`, {
-        method: 'GET',
-        headers: {
-            'Accept': 'application/json',
-            'Cookie': cookieHeader,
-        }
-    })
-
-    if (!response.ok) {
-        const errorText = await response.text()
-        console.error('🚨 Background: Load boards failed:', response.status, errorText)
-        throw new Error(`Failed to load boards: ${response.status} ${response.statusText}`)
-    }
-
-    const data = await response.json()
-    console.log('🎯 Background: Loaded boards:', data.boards?.length || 0)
-    return data
 }
 
-async function saveAd({ boardIds, pageId, tags, adData }) {
-    console.log('🎯 Background: Saving ad to boards:', boardIds)
-    console.log('🎯 Background: Ad data:', adData)
+async function checkSessionValidity() {
+    const now = Date.now()
 
-    // Get ALL cookies and find session cookie
-    const allCookies = await chrome.cookies.getAll({ url: ADBOARD_URL })
-    const possibleNames = [
-        'next-auth.session-token',
-        '__Secure-next-auth.session-token',
-        'authjs.session-token',
-        '__Secure-authjs.session-token'
-    ]
+    // Use cached result if still valid
+    if (now - lastSessionCheck < SESSION_CACHE_DURATION) {
+        console.log('📋 AdBoard: Using cached session status:', sessionValid)
+        return sessionValid
+    }
 
-    let sessionCookie = null
-    for (const name of possibleNames) {
-        const cookies = await chrome.cookies.getAll({ url: ADBOARD_URL, name })
-        if (cookies.length > 0) {
-            sessionCookie = cookies[0]
-            break
+    try {
+        console.log('🔍 AdBoard: Checking session validity...')
+
+        // Get session cookie using the working approach
+        const sessionCookie = await getSessionCookie()
+
+        if (!sessionCookie) {
+            console.log('❌ AdBoard: No session cookie found')
+            sessionValid = false
+            lastSessionCheck = now
+            return false
         }
-    }
 
-    let cookieHeader = ''
-    if (sessionCookie) {
-        cookieHeader = `${sessionCookie.name}=${sessionCookie.value}`
-    } else {
-        // Send all cookies as fallback
-        cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join('; ')
-    }
+        console.log('🍪 AdBoard: Session cookie found:', sessionCookie.name)
 
-    const response = await fetch(`${ADBOARD_URL}/api/v1/assets/fb`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Cookie': cookieHeader,
-        },
-        body: JSON.stringify({
-            boardIds,
-            pageId,
-            tags,
-            adData
+        // Test the session by calling the health endpoint
+        const response = await fetch(`${ADBOARD_URL}/api/health`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            }
         })
-    })
 
-    if (!response.ok) {
-        const errorText = await response.text()
-        console.error('🚨 Background: Save ad failed:', response.status, errorText)
-        throw new Error(`Failed to save ad: ${response.status} ${response.statusText}`)
+        if (response.ok) {
+            const healthData = await response.json()
+            console.log('🏥 AdBoard: Health check response:', healthData)
+
+            // Check if session is valid
+            if (healthData.session === 'valid') {
+                console.log('✅ AdBoard: Session is valid')
+                sessionValid = true
+            } else {
+                console.log('❌ AdBoard: Session is invalid')
+                sessionValid = false
+            }
+        } else {
+            console.log('❌ AdBoard: Health check failed:', response.status)
+            sessionValid = false
+        }
+
+        lastSessionCheck = now
+        return sessionValid
+
+    } catch (error) {
+        console.error('❌ AdBoard: Error checking session validity:', error)
+        sessionValid = false
+        lastSessionCheck = now
+        return false
     }
-
-    const data = await response.json()
-    console.log('🎯 Background: Ad saved successfully')
-    return data
 }
 
-// Handle extension icon click to open dashboard
-chrome.action.onClicked.addListener((tab) => {
+async function getSessionCookie() {
+    console.log('🔍 AdBoard: Searching for session cookies...')
+
+    try {
+        // Use the working approach: individual get() calls instead of getAll()
+        const possibleNames = [
+            'authjs.session-token',
+            'next-auth.session-token',
+            '__Host-authjs.csrf-token',
+            'authjs.csrf-token'
+        ]
+
+        // Try each cookie name individually using the working get() method
+        for (const name of possibleNames) {
+            try {
+                const cookie = await new Promise((resolve) => {
+                    chrome.cookies.get(
+                        { url: ADBOARD_URL, name: name },
+                        (cookie) => resolve(cookie)
+                    )
+                })
+
+                if (cookie) {
+                    console.log(`✅ AdBoard: Found session cookie: ${name}`)
+                    return cookie
+                }
+            } catch (error) {
+                console.log(`⚠️ AdBoard: Error getting cookie ${name}:`, error.message)
+            }
+        }
+
+        console.log('❌ AdBoard: No session cookies found')
+        return null
+
+    } catch (error) {
+        console.error('❌ AdBoard: Error accessing cookies:', error)
+        return null
+    }
+}
+
+async function loadBoardsFromAPI() {
+    const now = Date.now()
+
+    // Use cached boards if still valid
+    if (now - lastBoardsFetch < BOARDS_CACHE_DURATION && boardsCache.length > 0) {
+        console.log('📋 AdBoard: Using cached boards:', boardsCache.length)
+        return boardsCache
+    }
+
+    try {
+        console.log('📋 AdBoard: Loading boards from API...')
+
+        // Check session first
+        const isValid = await checkSessionValidity()
+        if (!isValid) {
+            console.log('❌ AdBoard: Session invalid, cannot load boards')
+            return []
+        }
+
+        const response = await fetch(`${ADBOARD_URL}/api/v1/boards`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+
+        if (response.ok) {
+            const boards = await response.json()
+            console.log('✅ AdBoard: Boards API response:', boards)
+            console.log('✅ AdBoard: Boards type:', typeof boards)
+            console.log('✅ AdBoard: Boards length:', boards?.length)
+            console.log('✅ AdBoard: Boards is array:', Array.isArray(boards))
+
+            // Handle different response structures
+            let boardsArray = boards
+            if (boards && boards.data && Array.isArray(boards.data)) {
+                boardsArray = boards.data
+            } else if (boards && boards.boards && Array.isArray(boards.boards)) {
+                boardsArray = boards.boards
+            } else if (Array.isArray(boards)) {
+                boardsArray = boards
+            } else {
+                console.warn('⚠️ AdBoard: Unexpected boards response structure:', boards)
+                boardsArray = []
+            }
+
+            console.log('✅ AdBoard: Final boards array:', boardsArray)
+            boardsCache = boardsArray
+            lastBoardsFetch = now
+            return boardsArray
+        } else if (response.status === 401) {
+            console.log('❌ AdBoard: Session expired, clearing cache')
+            sessionValid = false
+            boardsCache = []
+            return []
+        } else {
+            console.error('❌ AdBoard: Failed to load boards:', response.status)
+            return []
+        }
+
+    } catch (error) {
+        console.error('❌ AdBoard: Error loading boards:', error)
+        return []
+    }
+}
+
+async function saveAd(adData) {
+    try {
+        console.log('💾 AdBoard: Saving ad...', adData)
+
+        // Check session first
+        const isValid = await checkSessionValidity()
+        if (!isValid) {
+            throw new Error('Session expired. Please log in to AdBoard.')
+        }
+
+        const response = await fetch(`${ADBOARD_URL}/api/v1/assets/fb`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(adData)
+        })
+
+        if (response.ok) {
+            const result = await response.json()
+            console.log('✅ AdBoard: Ad saved successfully:', result)
+            return result
+        } else if (response.status === 401) {
+            sessionValid = false
+            throw new Error('Session expired. Please log in to AdBoard.')
+        } else {
+            const errorData = await response.json()
+            throw new Error(errorData.message || 'Failed to save ad')
+        }
+
+    } catch (error) {
+        console.error('❌ AdBoard: Error saving ad:', error)
+        throw error
+    }
+}
+
+function openDashboard() {
     chrome.tabs.create({ url: `${ADBOARD_URL}/dashboard` })
+}
+
+// Message listener for communication with content script and popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    try {
+        console.log('🎯 Background: Received message:', request.type, 'from tab:', sender.tab?.id)
+
+        if (request.type === 'LOAD_BOARDS') {
+            console.log('🎯 Background: Processing LOAD_BOARDS request')
+            handleLoadBoards()
+                .then(response => {
+                    console.log('🎯 Background: LOAD_BOARDS success, sending response')
+                    sendResponse({ success: true, data: { boards: response } })
+                })
+                .catch(error => {
+                    console.error('🚨 Background: LOAD_BOARDS error:', error)
+                    sendResponse({ success: false, error: error.message })
+                })
+            return true // Will respond asynchronously
+        }
+
+        if (request.type === 'SAVE_AD') {
+            console.log('🎯 Background: Processing SAVE_AD request')
+            saveAd(request.data)
+                .then(response => {
+                    console.log('🎯 Background: SAVE_AD success, sending response')
+                    sendResponse({ success: true, data: response })
+                })
+                .catch(error => {
+                    console.error('🚨 Background: SAVE_AD error:', error)
+                    sendResponse({ success: false, error: error.message })
+                })
+            return true // Will respond asynchronously
+        }
+
+        if (request.type === 'CHECK_SESSION') {
+            console.log('🎯 Background: Processing CHECK_SESSION request')
+            checkSessionValidity()
+                .then(isValid => {
+                    console.log('🎯 Background: CHECK_SESSION success, sending response')
+                    sendResponse({ success: true, data: { isValid } })
+                })
+                .catch(error => {
+                    console.error('🚨 Background: CHECK_SESSION error:', error)
+                    sendResponse({ success: false, error: error.message })
+                })
+            return true // Will respond asynchronously
+        }
+
+        console.log('⚠️ Background: Unknown message type:', request.type)
+        sendResponse({ success: false, error: 'Unknown message type' })
+
+    } catch (error) {
+        console.error('🚨 Background: Error processing message:', error)
+        sendResponse({ success: false, error: error.message })
+    }
 })
+
+async function handleLoadBoards() {
+    // Use cached boards if available
+    if (boardsCache.length > 0 && Date.now() - lastBoardsFetch < BOARDS_CACHE_DURATION) {
+        console.log('📋 AdBoard: Using cached boards')
+        return boardsCache
+    }
+
+    // Load from API
+    return await loadBoardsFromAPI()
+}

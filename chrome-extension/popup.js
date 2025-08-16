@@ -1,101 +1,109 @@
-// AdBoard Chrome Extension - Popup Script
-
+// AdBoard Extension Popup Script
 document.addEventListener('DOMContentLoaded', async () => {
-    const ADBOARD_URL = 'http://localhost:3000' // Change for production
+    const statusDiv = document.getElementById('status')
+    const statusText = document.getElementById('statusText')
+    const refreshBtn = document.getElementById('refreshBtn')
+    const refreshText = document.getElementById('refreshText')
+    const dashboardBtn = document.getElementById('dashboardBtn')
 
-    const statusDot = document.getElementById('status-dot')
-    const statusText = document.getElementById('status-text')
-    const dashboardBtn = document.getElementById('dashboard-btn')
-    const saveBtn = document.getElementById('save-btn')
-    const helpBtn = document.getElementById('help-btn')
+    // Check current status
+    await checkStatus()
 
-    // Set dashboard URL
-    dashboardBtn.href = `${ADBOARD_URL}/dashboard`
-    dashboardBtn.target = '_blank'
+    // Set up event listeners
+    refreshBtn.addEventListener('click', handleRefresh)
+    dashboardBtn.addEventListener('click', handleDashboard)
 
-    // Help button
-    helpBtn.addEventListener('click', () => {
-        chrome.tabs.create({
-            url: 'https://github.com/your-username/adboard#chrome-extension'
-        })
-    })
+    async function checkStatus() {
+        try {
+            setStatus('loading', 'Checking session and boards...')
 
-    try {
-        // Get current tab
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+            // Check session validity
+            const sessionResponse = await chrome.runtime.sendMessage({
+                type: 'CHECK_SESSION'
+            })
 
-        if (!tab.url) {
-            setStatus('inactive', 'Unable to access page')
-            return
+            if (sessionResponse?.success) {
+                const isValid = sessionResponse.data.isValid
+
+                if (isValid) {
+                    // Check if boards are loaded
+                    const boardsResponse = await chrome.runtime.sendMessage({
+                        type: 'LOAD_BOARDS'
+                    })
+
+                    if (boardsResponse?.success && boardsResponse?.data?.boards) {
+                        const boardCount = boardsResponse.data.boards.length
+                        setStatus('success', `Ready! ${boardCount} board(s) available`)
+                        refreshBtn.disabled = false
+                        refreshText.textContent = 'Refresh Boards'
+                    } else {
+                        setStatus('warning', 'Session valid but no boards found')
+                        refreshBtn.disabled = false
+                        refreshText.textContent = 'Load Boards'
+                    }
+                } else {
+                    setStatus('error', 'Not logged in to AdBoard')
+                    refreshBtn.disabled = false
+                    refreshText.textContent = 'Check Session'
+                }
+            } else {
+                setStatus('error', 'Failed to check status')
+                refreshBtn.disabled = false
+                refreshText.textContent = 'Retry'
+            }
+        } catch (error) {
+            console.error('Status check failed:', error)
+            setStatus('error', 'Connection error')
+            refreshBtn.disabled = false
+            refreshText.textContent = 'Retry'
         }
+    }
 
-        // Check if we're on Facebook Ad Library
-        if (!tab.url.includes('facebook.com/ads/library')) {
-            setStatus('inactive', 'Navigate to Facebook Ad Library')
-            return
-        }
+    async function handleRefresh() {
+        try {
+            setStatus('loading', 'Refreshing...')
+            refreshBtn.disabled = true
 
-        // Check if there's an ad ID in the URL
-        const url = new URL(tab.url)
-        const adId = url.searchParams.get('id')
-        const pageId = url.searchParams.get('view_all_page_id')
+            // Force refresh of session and boards
+            const sessionResponse = await chrome.runtime.sendMessage({
+                type: 'CHECK_SESSION'
+            })
 
-        if (!adId) {
-            setStatus('inactive', 'No ad selected')
-            return
-        }
-
-        if (!pageId) {
-            setStatus('inactive', 'No page ID found')
-            return
-        }
-
-        // We're good to go!
-        setStatus('active', `Ready to save ad ${adId}`)
-        saveBtn.style.display = 'block'
-
-        // Save button click
-        saveBtn.addEventListener('click', async () => {
-            saveBtn.textContent = 'Opening save dialog...'
-            saveBtn.style.opacity = '0.5'
-
-            try {
-                // Inject content script to show save dialog
-                await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    function: triggerSaveDialog
+            if (sessionResponse?.success && sessionResponse?.data?.isValid) {
+                const boardsResponse = await chrome.runtime.sendMessage({
+                    type: 'LOAD_BOARDS'
                 })
 
-                // Close popup
-                window.close()
-            } catch (error) {
-                console.error('Failed to trigger save dialog:', error)
-                saveBtn.textContent = 'Save Current Ad'
-                saveBtn.style.opacity = '1'
+                if (boardsResponse?.success && boardsResponse?.data?.boards) {
+                    const boardCount = boardsResponse.data.boards.length
+                    setStatus('success', `Refreshed! ${boardCount} board(s) available`)
+                } else {
+                    setStatus('warning', 'Session valid but no boards found')
+                }
+            } else {
+                setStatus('error', 'Session expired. Please log in to AdBoard.')
             }
-        })
+        } catch (error) {
+            console.error('Refresh failed:', error)
+            setStatus('error', 'Refresh failed')
+        } finally {
+            refreshBtn.disabled = false
+            refreshText.textContent = 'Refresh'
+        }
+    }
 
-    } catch (error) {
-        console.error('Error in popup:', error)
-        setStatus('inactive', 'Error accessing page')
+    function handleDashboard() {
+        chrome.tabs.create({ url: 'http://localhost:3000/dashboard' })
+    }
+
+    function setStatus(type, message) {
+        // Remove all status classes
+        statusDiv.className = 'status'
+
+        // Add the appropriate status class
+        statusDiv.classList.add(type)
+
+        // Update the message
+        statusText.textContent = message
     }
 })
-
-function setStatus(type, text) {
-    const statusDot = document.getElementById('status-dot')
-    const statusText = document.getElementById('status-text')
-
-    statusDot.className = `status-dot ${type === 'active' ? '' : 'inactive'}`
-    statusText.textContent = text
-}
-
-// Function to inject into the page
-function triggerSaveDialog() {
-    // Find the AdBoard save button and click it
-    const saveButton = document.getElementById('adboard-save-btn')
-    if (saveButton) {
-        saveButton.click()
-    } else {
-        alert('AdBoard save button not found. Please refresh the page and try again.')
-    }
-}
