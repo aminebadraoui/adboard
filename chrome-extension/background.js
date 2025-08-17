@@ -15,29 +15,42 @@ const SESSION_CACHE_DURATION = 1 * 60 * 1000 // 1 minute
 // Pre-load data on extension startup
 chrome.runtime.onStartup.addListener(() => {
     console.log('🚀 AdBoard: Extension starting up...')
+    console.log('🔍 AdBoard: isExtensionReady before setting:', isExtensionReady)
     // Mark as ready immediately for basic operations like PING
     isExtensionReady = true
+    console.log('🔍 AdBoard: isExtensionReady after setting:', isExtensionReady)
     preloadData()
 })
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log('🚀 AdBoard: Extension installed...')
+    console.log('🔍 AdBoard: isExtensionReady before setting:', isExtensionReady)
     // Mark as ready immediately for basic operations like PING
     isExtensionReady = true
+    console.log('🔍 AdBoard: isExtensionReady after setting:', isExtensionReady)
     preloadData()
 })
 
 async function preloadData() {
     console.log('🚀 AdBoard: Pre-loading data...')
     try {
-        await checkSessionValidity()
-        await loadBoardsFromAPI()
-        console.log('✅ AdBoard: Pre-loading completed')
+        console.log('🔍 AdBoard: Step 1 - Checking session validity...')
+        const sessionResult = await checkSessionValidity()
+        console.log('🔍 AdBoard: Session validity result:', sessionResult)
+
+        console.log('🔍 AdBoard: Step 2 - Loading boards from API...')
+        const boardsResult = await loadBoardsFromAPI()
+        console.log('🔍 AdBoard: Boards loading result:', boardsResult?.length || 0, 'boards')
+
+        console.log('✅ AdBoard: Pre-loading completed successfully')
         isExtensionReady = true
+        console.log('✅ AdBoard: isExtensionReady set to:', isExtensionReady)
     } catch (error) {
         console.error('❌ AdBoard: Pre-loading failed:', error)
+        console.error('❌ AdBoard: Error stack:', error.stack)
         // Still mark as ready even if preloading fails
         isExtensionReady = true
+        console.log('✅ AdBoard: isExtensionReady set to true despite error:', isExtensionReady)
     }
 }
 
@@ -254,10 +267,13 @@ function openDashboard() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
         console.log('🎯 Background: Received message:', request.type, 'from tab:', sender.tab?.id)
+        console.log('🔍 Background: isExtensionReady state:', isExtensionReady)
+        console.log('🔍 Background: Extension ready check:', request.type !== 'PING' && !isExtensionReady)
 
         // Check if extension is ready (except for PING)
         if (request.type !== 'PING' && !isExtensionReady) {
             console.log('⚠️ Background: Extension not ready yet, rejecting message:', request.type)
+            console.log('⚠️ Background: isExtensionReady value:', isExtensionReady)
             sendResponse({ success: false, error: 'Extension not ready yet' })
             return false
         }
@@ -310,6 +326,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.type === 'PING') {
             console.log('🎯 Background: Processing PING request')
             // Simple ping response to check if extension is ready
+            // Also use this opportunity to mark extension as ready if it's not
+            if (!isExtensionReady) {
+                console.log('🔧 Background: PING received but extension not ready, setting as ready now')
+                isExtensionReady = true
+            }
             sendResponse({ success: true, data: { message: 'pong', timestamp: Date.now() } })
             return false // Synchronous response
         }

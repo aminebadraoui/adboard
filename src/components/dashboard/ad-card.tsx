@@ -5,10 +5,16 @@ interface Asset {
     id: string
     platform: string
     fbAdId: string
+    fbPageId?: string
     headline?: string
     brandName?: string
     adText?: string
     createdAt: string
+    brand?: {
+        fbPageId: string
+        name: string
+        imageUrl: string
+    }
     files: Array<{
         id: string
         type: string
@@ -29,6 +35,33 @@ interface AdCardProps {
 export function AdCard({ asset }: AdCardProps) {
     const primaryFile = asset.files[0]
     const isVideo = primaryFile?.type === 'video'
+
+    // Log asset data for debugging
+    console.log('🎯 AdCard: Rendering asset:', {
+        id: asset.id,
+        fbAdId: asset.fbAdId,
+        fbPageId: asset.fbPageId,
+        brandName: asset.brandName,
+        brand: asset.brand,
+        headline: asset.headline,
+        adText: asset.adText,
+        files: asset.files.length,
+        tags: asset.tags.length,
+        createdAt: asset.createdAt
+    })
+
+    // Log brand information specifically
+    if (asset.brand) {
+        console.log('✅ AdCard: Brand data found:', {
+            fbPageId: asset.brand.fbPageId,
+            name: asset.brand.name,
+            imageUrl: asset.brand.imageUrl
+        })
+    } else if (asset.brandName) {
+        console.log('⚠️ AdCard: Only brandName available (no brand object):', asset.brandName)
+    } else {
+        console.log('❌ AdCard: No brand information available')
+    }
 
     return (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
@@ -63,10 +96,28 @@ export function AdCard({ asset }: AdCardProps) {
 
             {/* Content */}
             <div className="p-4">
-                {/* Brand name */}
-                {asset.brandName && (
-                    <div className="text-sm font-medium text-gray-900 mb-1">
-                        {asset.brandName}
+                {/* Brand section with image and name */}
+                {(asset.brand || asset.brandName) && (
+                    <div className="flex items-center gap-3 mb-3">
+                        {/* Brand image */}
+                        {asset.brand?.imageUrl && (
+                            <img
+                                src={asset.brand.imageUrl}
+                                alt={asset.brand.name}
+                                className="w-8 h-8 rounded-full object-cover"
+                            />
+                        )}
+                        {/* Brand name and page ID */}
+                        <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-gray-900 truncate">
+                                {asset.brand?.name || asset.brandName}
+                            </div>
+                            {asset.brand?.fbPageId && (
+                                <div className="text-xs text-gray-500">
+                                    ID: {asset.brand.fbPageId}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 

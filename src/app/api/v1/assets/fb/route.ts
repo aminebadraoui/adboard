@@ -34,6 +34,8 @@ const createAssetSchema = z.object({
         adText: z.string().optional(),
         description: z.string().optional(),
         cta: z.string().optional(),
+        pageId: z.string().optional(), // Added for brand processing
+        brandImageUrl: z.string().optional(), // Added for brand processing
         mediaDetails: z.array(z.object({
             url: z.string(),
             type: z.enum(['image', 'video']),
@@ -46,7 +48,10 @@ const createAssetSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-    console.log('🚨 ASSETS/FB POST ENDPOINT HIT!')
+    // Add request deduplication
+    const requestId = crypto.randomUUID()
+    console.log(`🚀 ASSETS/FB: New request started [${requestId}]`)
+
     try {
         // Authenticate user
         console.log('🚨 About to authenticate user...')
@@ -126,8 +131,7 @@ export async function POST(req: NextRequest) {
         const adId = adData.fbAdId
         console.log('✅ Using Facebook ad ID from extension:', adId)
 
-        // Check if asset already exists for this org
-        console.log('🚨 Checking if asset already exists for adId:', adId, 'orgId:', orgId)
+        // Check if asset already exists for this ad ID and org
         const existingAsset = await prisma.asset.findUnique({
             where: {
                 fbAdId_orgId: {
@@ -141,57 +145,26 @@ export async function POST(req: NextRequest) {
                     include: {
                         board: true
                     }
-                },
-                tags: {
-                    include: {
-                        tag: true
-                    }
                 }
             }
         })
 
+        console.log('🚨 Checking if asset already exists for adId:', adId, 'orgId:', orgId)
+
+        // If asset exists, check if it needs to be added to new boards
         if (existingAsset) {
-            console.log('🚨 FOUND EXISTING ASSET:', {
-                id: existingAsset.id,
-                fbAdId: existingAsset.fbAdId,
-                brandName: existingAsset.brandName,
-                headline: existingAsset.headline,
-                description: existingAsset.description
-            })
+            console.log('✅ Asset already exists, checking board associations...')
 
-            // Check which boards this ad is already on
+            // Get existing board IDs for this asset
             const existingBoardIds = existingAsset.boards.map(ba => ba.boardId)
+            console.log('Existing board IDs:', existingBoardIds)
 
-            // SECURITY: Validate that all new boardIds belong to user's organization
-            const validBoards = await prisma.board.findMany({
-                where: {
-                    id: { in: boardIds },
-                    orgId: orgId
-                },
-                select: { id: true }
-            })
-
-            const validBoardIds = validBoards.map(b => b.id)
-            const invalidBoardIds = boardIds.filter(id => !validBoardIds.includes(id))
-
-            if (invalidBoardIds.length > 0) {
-                console.error('🚨 Invalid board IDs for existing asset:', invalidBoardIds)
-                return NextResponse.json(
-                    {
-                        error: 'Invalid board access',
-                        details: 'One or more boards do not exist or you do not have access to them.',
-                        invalidBoardIds
-                    },
-                    { status: 403 }
-                )
-            }
-
-            const newBoardIds = validBoardIds.filter(boardId => !existingBoardIds.includes(boardId))
-            console.log('🚨 Existing boards:', existingBoardIds)
-            console.log('🚨 New boards to add:', newBoardIds)
+            // Find new board IDs that don't already have this asset
+            const newBoardIds = boardIds.filter(boardId => !existingBoardIds.includes(boardId))
+            console.log('New board IDs to add:', newBoardIds)
 
             if (newBoardIds.length > 0) {
-                // Add to the new boards
+                // Add asset to new boards
                 const boardAssetCreations = newBoardIds.map(boardId => ({
                     boardId,
                     assetId: existingAsset.id
@@ -232,6 +205,66 @@ export async function POST(req: NextRequest) {
         // Use ad data provided by Chrome extension
         console.log('🎯 ASSETS/FB: Using ad data from Chrome extension for adId:', adId)
 
+        // Handle brand data if provided
+        let brandId = null
+        let brandData = null
+        if (adData.pageId && adData.brandName && adData.brandImageUrl) {
+            console.log('🎯 ASSETS/FB: Processing brand data:', {
+                pageId: adData.pageId,
+                brandName: adData.brandName,
+                hasImage: !!adData.brandImageUrl
+            })
+
+            // Check if brand already exists for this page ID and org
+            let existingBrand = await prisma.brand.findUnique({
+                where: {
+                    fbPageId_orgId: {
+                        fbPageId: adData.pageId,
+                        orgId
+                    }
+                }
+            })
+
+            if (!existingBrand) {
+                console.log('🎯 ASSETS/FB: Brand not found, creating new brand...')
+
+                try {
+                    // Upload brand image to Cloudinary
+                    const brandImageResult = await uploadImageFromUrl(adData.brandImageUrl, {
+                        orgId,
+                        assetId: 'brand_' + adData.pageId
+                    })
+
+                    // Create new brand
+                    existingBrand = await prisma.brand.create({
+                        data: {
+                            fbPageId: adData.pageId,
+                            name: adData.brandName,
+                            imageUrl: brandImageResult.secure_url,
+                            cloudinaryId: brandImageResult.public_id,
+                            orgId
+                        }
+                    })
+
+                    console.log('✅ ASSETS/FB: Brand created successfully:', existingBrand.fbPageId)
+                } catch (error) {
+                    console.error('❌ ASSETS/FB: Failed to create brand:', error)
+                    // Continue without brand if creation fails
+                }
+            } else {
+                console.log('✅ ASSETS/FB: Found existing brand:', existingBrand.fbPageId)
+            }
+
+            if (existingBrand) {
+                brandId = existingBrand.fbPageId
+                brandData = {
+                    fbPageId: existingBrand.fbPageId,
+                    name: existingBrand.name,
+                    imageUrl: existingBrand.imageUrl
+                }
+            }
+        }
+
         const processedAdData = {
             fbAdId: adData.fbAdId,
             brandName: adData.brandName,
@@ -251,7 +284,8 @@ export async function POST(req: NextRequest) {
             fbAdId: processedAdData.fbAdId,
             brandName: processedAdData.brandName,
             headline: processedAdData.headline?.substring(0, 50) + '...',
-            adTextLength: processedAdData.adText?.length
+            adTextLength: processedAdData.adText?.length,
+            brandId: brandId
         })
 
         // Create asset record with data from Chrome extension
@@ -274,62 +308,21 @@ export async function POST(req: NextRequest) {
             }
         })
 
-        // Upload media files to Cloudinary using rich media details from Chrome extension
-        const uploadedFiles = []
+        // Store media files as URLs only (don't upload to Cloudinary)
+        const storedFiles = []
 
         if (processedAdData.mediaDetails.length > 0) {
             for (let i = 0; i < processedAdData.mediaDetails.length; i++) {
                 const mediaItem = processedAdData.mediaDetails[i]
 
                 try {
-                    let uploadResult
-
-                    // Upload to Cloudinary based on media type
-                    if (mediaItem.type === 'video') {
-                        uploadResult = await uploadVideoFromUrl(mediaItem.url, {
-                            orgId,
-                            assetId: asset.id
-                        })
-                    } else {
-                        uploadResult = await uploadImageFromUrl(mediaItem.url, {
-                            orgId,
-                            assetId: asset.id
-                        })
-                    }
-
-                    // Store uploaded file metadata in database
+                    // Store media file metadata in database WITHOUT uploading to Cloudinary
                     const assetFile = await prisma.assetFile.create({
                         data: {
                             assetId: asset.id,
                             type: mediaItem.type,
-                            url: uploadResult.secure_url,
-                            cloudinaryId: uploadResult.public_id,
-                            width: uploadResult.width,
-                            height: uploadResult.height,
-                            fileSize: uploadResult.bytes,
-                            duration: uploadResult.duration,
-                            order: i
-                        }
-                    })
-
-                    uploadedFiles.push({
-                        url: assetFile.url,
-                        type: assetFile.type,
-                        source: mediaItem.source,
-                        alt: mediaItem.alt || ''
-                    })
-
-                    console.log(`✅ Successfully uploaded ${mediaItem.type} to Cloudinary: ${uploadResult.public_id}`)
-                } catch (error) {
-                    console.error(`❌ Failed to upload media ${mediaItem.url}:`, error)
-
-                    // Create a fallback entry with original URL if Cloudinary upload fails
-                    const assetFile = await prisma.assetFile.create({
-                        data: {
-                            assetId: asset.id,
-                            type: mediaItem.type,
-                            url: mediaItem.url, // Fallback to original URL
-                            cloudinaryId: `failed_upload_${asset.id}_${i}_${mediaItem.source}`,
+                            url: mediaItem.url, // Use original URL
+                            cloudinaryId: `not_uploaded_${asset.id}_${i}_${mediaItem.source}`, // Mark as not uploaded
                             width: null,
                             height: null,
                             fileSize: null,
@@ -338,18 +331,21 @@ export async function POST(req: NextRequest) {
                         }
                     })
 
-                    uploadedFiles.push({
+                    storedFiles.push({
                         url: assetFile.url,
                         type: assetFile.type,
                         source: mediaItem.source,
                         alt: mediaItem.alt || ''
                     })
 
+                    console.log(`📁 Stored media file (not uploaded): ${mediaItem.type} - ${mediaItem.source}`)
+                } catch (error) {
+                    console.error(`❌ Failed to store media file ${mediaItem.url}:`, error)
                     // Continue with other files even if one fails
                 }
             }
 
-            console.log(`📁 Processed ${uploadedFiles.length} media files (uploaded to Cloudinary where possible)`)
+            console.log(`📁 Processed ${storedFiles.length} media files (stored as URLs, not uploaded to Cloudinary)`)
         }
 
         // Add to boards
@@ -450,12 +446,24 @@ export async function POST(req: NextRequest) {
             adText: asset.adText,
             description: asset.description,
             adUrl: asset.adUrl,
-            media: uploadedFiles,
+            media: storedFiles,
             boardIds: finalBoardIds,
             runtimeDays: asset.runtimeDays,
             firstSeenDate: asset.firstSeenDate,
             lastSeenDate: asset.lastSeenDate,
+            brand: brandData,
             message: `Ad saved to ${finalBoardIds.length} board(s) successfully!`
+        })
+
+        // Log the final response for debugging
+        console.log('🎯 ASSETS/FB: Final response data:', {
+            assetId: asset.id,
+            fbAdId: asset.fbAdId,
+            fbPageId: asset.fbPageId,
+            brandName: asset.brandName,
+            brandData: brandData,
+            mediaCount: storedFiles.length,
+            boardCount: finalBoardIds.length
         })
 
         // Add CORS headers for Chrome extension

@@ -90,6 +90,7 @@ model Organization {
   memberships Membership[]
   shareLinks  ShareLink[]
   tags        Tag[]
+  brands      Brand[]
 
   @@map("organizations")
 }
@@ -155,6 +156,22 @@ model Asset {
   @@index([brandName])
   @@index([createdAt])
   @@map("assets")
+}
+
+model Brand {
+  fbPageId     String       @id @map("fb_page_id")
+  name         String
+  imageUrl     String       @map("image_url")
+  cloudinaryId String       @map("cloudinary_id")
+  orgId        String       @map("org_id")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([fbPageId, orgId])
+  @@index([fbPageId])
+  @@index([name])
+  @@map("brands")
 }
 
 model AssetFile {

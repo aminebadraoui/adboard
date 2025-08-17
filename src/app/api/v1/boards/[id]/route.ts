@@ -61,7 +61,63 @@ export async function GET(
             return NextResponse.json({ error: 'Board not found' }, { status: 404 })
         }
 
-        return NextResponse.json(board)
+        // Fetch brand information for assets that have fbPageId
+        const assetsWithBrands = await Promise.all(
+            board.assets.map(async (boardAsset) => {
+                const asset = boardAsset.asset
+                let brand = null
+
+                if (asset.fbPageId) {
+                    brand = await prisma.brand.findUnique({
+                        where: {
+                            fbPageId_orgId: {
+                                fbPageId: asset.fbPageId,
+                                orgId: asset.orgId
+                            }
+                        }
+                    })
+                }
+
+                return {
+                    ...boardAsset,
+                    asset: {
+                        ...asset,
+                        brand: brand ? {
+                            fbPageId: brand.fbPageId,
+                            name: brand.name,
+                            imageUrl: brand.imageUrl
+                        } : null
+                    }
+                }
+            })
+        )
+
+        // Replace the assets with the enhanced version
+        const enhancedBoard = {
+            ...board,
+            assets: assetsWithBrands
+        }
+
+        // Log the board data being returned for debugging
+        console.log('🎯 BOARDS API: Returning board data:', {
+            boardId: enhancedBoard.id,
+            boardName: enhancedBoard.name,
+            assetCount: enhancedBoard.assets.length,
+            assets: enhancedBoard.assets.map(ba => ({
+                assetId: ba.asset.id,
+                fbAdId: ba.asset.fbAdId,
+                fbPageId: ba.asset.fbPageId,
+                brandName: ba.asset.brandName,
+                hasBrand: !!ba.asset.brand,
+                brand: ba.asset.brand ? {
+                    fbPageId: ba.asset.brand.fbPageId,
+                    name: ba.asset.brand.name,
+                    hasImage: !!ba.asset.brand.imageUrl
+                } : null
+            }))
+        })
+
+        return NextResponse.json(enhancedBoard)
     } catch (error) {
         console.error('Error fetching board:', error)
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

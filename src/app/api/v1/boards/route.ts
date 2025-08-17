@@ -139,11 +139,36 @@ export async function POST(request: NextRequest) {
             },
         })
 
+        console.log('🎯 BOARDS API: Organization lookup result:', {
+            userId: session.user.id,
+            foundOrg: !!userOrg,
+            orgId: userOrg?.id,
+            orgName: userOrg?.name
+        })
+
         if (!userOrg) {
             // Create personal organization for the user
+            const user = await prisma.user.findUnique({
+                where: { id: session.user.id }
+            })
+
+            if (!user) {
+                return NextResponse.json({ error: 'User not found' }, { status: 404 })
+            }
+
+            const orgName = user.name ? `${user.name}'s Organization` : `${session.user.email || 'User'}'s Organization`
+            const orgSlug = `user-${session.user.id}-${Date.now()}`
+
+            console.log('🎯 BOARDS API: Creating new organization:', {
+                userId: session.user.id,
+                orgName,
+                orgSlug
+            })
+
             userOrg = await prisma.organization.create({
                 data: {
-                    name: `${session.user.email || 'User'}'s Organization`,
+                    name: orgName,
+                    slug: orgSlug,
                     memberships: {
                         create: {
                             userId: session.user.id,
@@ -151,6 +176,12 @@ export async function POST(request: NextRequest) {
                         },
                     },
                 },
+            })
+
+            console.log('✅ BOARDS API: Organization created successfully:', {
+                orgId: userOrg.id,
+                orgName: userOrg.name,
+                orgSlug: userOrg.slug
             })
         }
 
@@ -167,6 +198,13 @@ export async function POST(request: NextRequest) {
                     },
                 },
             },
+        })
+
+        console.log('✅ BOARDS API: Board created successfully:', {
+            boardId: board.id,
+            boardName: board.name,
+            orgId: board.orgId,
+            assetCount: board._count.assets
         })
 
         return NextResponse.json(board, { status: 201 })

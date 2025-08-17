@@ -3,8 +3,10 @@
 
 class AdBoardSaver {
     constructor() {
+        console.log('🏗️ AdBoard: Constructor called - instance ID:', Date.now())
         this.adboardUrl = 'http://localhost:3000' // Change for production
         this.injectedAds = new Set() // Track processed ads
+        this.isObserving = false // Prevent multiple simultaneous observations
         this.boardsCache = null // Cache for boards
         this.sessionValid = false // Session status
         this.isInitialized = false // Track initialization
@@ -551,79 +553,165 @@ class AdBoardSaver {
     }
 
     detectAndLogAdCards() {
-        console.log('🔍 AdBoard: Starting ad card detection...')
+        const callId = Date.now()
+        console.log('🔍 AdBoard: Starting ad card detection... (Call ID:', callId, ')')
 
-        // Strategy: Look for containers that have BOTH Library ID and are reasonable sized
-        const allDivs = document.querySelectorAll('div')
-        console.log(`📊 Total divs on page: ${allDivs.length}`)
+        // Prevent duplicate processing
+        if (this.processingAds) {
+            console.log('⚠️ AdBoard: Already processing ads, skipping... (Call ID:', callId, ')')
+            return
+        }
+        this.processingAds = true
 
+        // Strategy: Look for the ACTUAL ad card containers, not parent containers
         const potentialAdCards = []
 
-        allDivs.forEach((div, index) => {
+        // Look for Facebook's specific ad card containers
+        const adCardSelectors = [
+            // Primary: Look for containers with Library ID that are actual ad cards
+            'div[data-testid="ad-card"]',
+            'div[role="article"]',
+            'div[data-testid="ad"]',
+            // Fallback: Look for containers with specific Facebook classes
+            'div.x1lliihq.x1n2onr6.x5n08af.x2lah0s.x6ikm8r.x10wlt62.xlyipyv.x1h4wuuj',
+            'div.x1lliihq.x1n2onr6.x5n08af.x2lah0s.x6ikm8r.x10wlt62.xlyipyv.x1h4wuuj.x1h4wuuj'
+        ]
+
+        let foundAdCards = []
+
+        // Try each selector to find ad cards
+        for (const selector of adCardSelectors) {
+            const elements = document.querySelectorAll(selector)
+            if (elements.length > 0) {
+                console.log(`✅ Found ${elements.length} ad cards using selector: ${selector}`)
+                foundAdCards = Array.from(elements)
+                break
+            }
+        }
+
+        // If no ad cards found with selectors, fall back to the old method but be more precise
+        if (foundAdCards.length === 0) {
+            console.log('⚠️ No ad cards found with selectors, falling back to text-based detection...')
+
+            // Look for containers that have BOTH Library ID and are reasonable sized
+            const allDivs = document.querySelectorAll('div')
+            console.log(`📊 Total divs on page: ${allDivs.length}`)
+
+            allDivs.forEach((div, index) => {
+                const text = div.textContent || ''
+
+                // Look for Library ID pattern (primary indicator)
+                const libraryIdMatch = text.match(/Library ID:\s*(\d+)/i)
+
+                // Also look for sponsored ads without Library ID (image-only ads)
+                const hasSponsored = text.includes('Sponsored')
+                const hasSeeAdDetails = text.includes('See ad details')
+                const hasActive = text.includes('Active')
+                const hasImages = div.querySelectorAll('img[src*="fbcdn"], img[src*="scontent"]').length > 0
+
+                let libraryId = null
+                let isValidAd = false
+
+                if (libraryIdMatch) {
+                    // Primary: Library ID ads
+                    libraryId = libraryIdMatch[1]
+
+                    // Try to find a more specific ad container by looking for a parent with better characteristics
+                    let adContainer = div
+                    let parent = div.parentElement
+                    while (parent && parent !== document.body) {
+                        const parentRect = parent.getBoundingClientRect()
+                        const parentLinkCount = parent.querySelectorAll('a[href*="http"]').length
+
+                        // If parent has reasonable size and link count, and contains the Library ID, use it
+                        if (parentRect.width > 400 && parentRect.width < 1500 &&
+                            parentRect.height > 300 && parentRect.height < 1500 &&
+                            parentLinkCount < 15 &&
+                            parent.textContent.includes(libraryId)) {
+                            adContainer = parent
+                        }
+                        parent = parent.parentElement
+                    }
+
+                    // Update the div reference to the better container
+                    div = adContainer
+                    isValidAd = true
+                } else if (hasSponsored && hasImages && (hasSeeAdDetails || hasActive)) {
+                    // Secondary: Sponsored image ads
+                    libraryId = `sponsored_${this.hashCode(text.substring(0, 200))}_${Date.now()}`
+                    isValidAd = true
+                }
+
+                if (isValidAd && libraryId) {
+                    // Make sure this div is a reasonable size (not too small or too large)
+                    const rect = div.getBoundingClientRect()
+                    const hasGoodSize = rect.width > 300 && rect.height > 200 &&
+                        rect.width < 2000 && rect.height < 2000 // Prevent overly large containers
+
+                    // Also check that this container doesn't have too many links (sign of page-wide container)
+                    const linkCount = div.querySelectorAll('a[href*="http"]').length
+                    const reasonableLinkCount = linkCount < 20 // Individual ads shouldn't have 20+ links
+
+                    // Make sure it's not a duplicate (same ID already processed)
+                    const isUnique = !potentialAdCards.some(card => card.libraryId === libraryId)
+
+                    if (hasGoodSize && reasonableLinkCount && isUnique) {
+                        foundAdCards.push(div)
+                    }
+                }
+            })
+        }
+
+        // Process found ad cards
+        foundAdCards.forEach((div, index) => {
             const text = div.textContent || ''
 
-            // Look for Library ID pattern (primary indicator)
-            const libraryIdMatch = text.match(/Library ID:\s*(\d+)/)
+            // Use the helper function for more reliable Library ID extraction
+            const getTextByLabel = (label) => {
+                const el = [...div.querySelectorAll("span, div")]
+                    .find(e => e.innerText?.trim().startsWith(label));
+                return el ? el.innerText.replace(label, "").trim() : null;
+            };
 
-            // Also look for sponsored ads without Library ID (image-only ads)
-            const hasSponsored = text.includes('Sponsored')
-            const hasSeeAdDetails = text.includes('See ad details')
-            const hasActive = text.includes('Active')
-            const hasImages = div.querySelectorAll('img[src*="fbcdn"], img[src*="scontent"]').length > 0
+            const libraryId = getTextByLabel("Library ID:") ||
+                getTextByLabel("library id:") ||
+                `ad_${index}_${Date.now()}`
 
-            let libraryId = null
-            let isValidAd = false
+            // Skip verbose container logging - focus on API payload
 
-            if (libraryIdMatch) {
-                // Primary: Library ID ads
-                libraryId = libraryIdMatch[1]
-                isValidAd = true
-            } else if (hasSponsored && hasImages && (hasSeeAdDetails || hasActive)) {
-                // Secondary: Sponsored image ads
-                libraryId = `sponsored_${this.hashCode(text.substring(0, 200))}_${Date.now()}`
-                isValidAd = true
-            }
+            // Make sure it's not a duplicate (same ID already processed)
+            const isUnique = !potentialAdCards.some(card => card.libraryId === libraryId)
 
-            if (isValidAd && libraryId) {
-                // Make sure this div is a reasonable size (not a tiny nested element)
-                const rect = div.getBoundingClientRect()
-                const hasGoodSize = rect.width > 300 && rect.height > 200
-
-                // Make sure it's not a duplicate (same ID already processed)
-                const isUnique = !potentialAdCards.some(card => card.libraryId === libraryId)
-
-                if (hasGoodSize && isUnique) {
-                    const adCard = this.analyzeAdCard(div, libraryId)
-                    potentialAdCards.push(adCard)
-                }
+            if (isUnique) {
+                const adCard = this.analyzeAdCard(div, libraryId)
+                potentialAdCards.push(adCard)
             }
         })
 
         console.log(`✅ AdBoard: Found ${potentialAdCards.length} unique ad cards`)
 
-        // Log detected ads and inject save buttons
+        // Inject save buttons for detected ads
         potentialAdCards.forEach((card, index) => {
-            console.log(`📝 Ad Card ${index + 1}:`, {
-                libraryId: card.libraryId,
-                brandName: card.brandName,
-                adTextLength: card.adText.length,
-                adText: card.adText,
-                mediaCount: card.mediaDetails.length,
-                mediaTypes: card.mediaDetails.map(m => `${m.type}(${m.source})`).join(', '),
-                mainMediaUrl: card.mediaDetails[0]?.url || 'none',
-                hasSponsored: card.hasSponsored,
-                hasSeeAdDetails: card.hasSeeAdDetails
-            })
-
             // Inject save button for this ad card
             this.injectSaveButton(card)
         })
 
+        // Reset processing flag
+        this.processingAds = false
+
+        console.log('✅ AdBoard: Ad card detection completed (Call ID:', callId, ')')
         return potentialAdCards
     }
 
     analyzeAdCard(container, libraryId) {
         const text = container.textContent || ''
+
+        // Helper function to extract text by label (like the reference code)
+        const getTextByLabel = (label) => {
+            const el = [...container.querySelectorAll("span, div")]
+                .find(e => e.innerText?.trim().startsWith(label));
+            return el ? el.innerText.replace(label, "").trim() : null;
+        };
 
         // Extract brand name using Facebook-specific selectors
         let brandName = ''
@@ -706,15 +794,7 @@ class AdBoardSaver {
                     !elementText.includes('Started running') && !elementText.includes('See ad details') &&
                     !elementText.includes('This ad has') && !elementText.match(/^\d+\s+ads/)) {
 
-                    // Debug: Log the text extraction process
-                    console.log('🔍 Found potential ad text:', {
-                        selector: selector,
-                        originalLength: element.innerHTML?.length || 0,
-                        processedLength: elementText.length,
-                        hasLineBreaks: elementText.includes('\n'),
-                        lineBreakCount: (elementText.match(/\n/g) || []).length,
-                        sampleText: elementText.substring(0, 100) + '...'
-                    })
+                    // Found ad text
 
                     adText = elementText
                     break
@@ -723,41 +803,72 @@ class AdBoardSaver {
             if (adText) break
         }
 
-        // Extract images and videos - prioritize content media over profile images
+        // Extract media - prioritize videos and their posters, then main images
         const mediaUrls = []
+        const processedUrls = new Set() // Track URLs to avoid duplicates
 
-        // First, look for videos (main content)
+        // First, look for videos (limit to 1 video max to avoid clutter)
         const videos = container.querySelectorAll('video')
+        let videosProcessed = 0
+        const maxVideos = 1 // Reduce to 1 to limit media
+
         videos.forEach(video => {
-            // Video source
-            if (video.src && (video.src.includes('fbcdn') || video.src.includes('video'))) {
+            if (videosProcessed >= maxVideos) return
+
+            let addedVideoSrc = false
+            let addedVideoPoster = false
+
+            // Add video source
+            if (video.src && video.src.includes('fbcdn') && !processedUrls.has(video.src)) {
                 mediaUrls.push({
                     url: video.src,
                     type: 'video',
                     source: 'video_src'
                 })
+                processedUrls.add(video.src)
+                addedVideoSrc = true
             }
-            // Video poster (thumbnail)
-            if (video.poster && video.poster.includes('fbcdn')) {
+
+            // Add video poster (thumbnail) for the same video
+            if (video.poster && video.poster.includes('fbcdn') && !processedUrls.has(video.poster)) {
                 mediaUrls.push({
                     url: video.poster,
                     type: 'image',
                     source: 'video_poster'
                 })
+                processedUrls.add(video.poster)
+                addedVideoPoster = true
+            }
+
+            // Only count as processed if we actually added something
+            if (addedVideoSrc || addedVideoPoster) {
+                videosProcessed++
             }
         })
 
-        // Then look for main content images (skip tiny profile pics)
+        // Videos processed
+
+        // Then look for main content images (skip profile pics and small images)
         const images = container.querySelectorAll('img')
+        let imageCount = 0
+        // If we have videos, limit images to 1, otherwise allow up to 3
+        const maxImages = videosProcessed > 0 ? 1 : 3
+
         images.forEach(img => {
-            if (img.src && (img.src.includes('fbcdn') || img.src.includes('scontent'))) {
+            if (imageCount >= maxImages) return
+
+            if (img.src && (img.src.includes('fbcdn') || img.src.includes('scontent')) && !processedUrls.has(img.src)) {
                 // Skip small profile images and icons based on URL patterns
                 const isSmallImage = img.src.includes('_s60x60') ||
                     img.src.includes('_s40x40') ||
                     img.src.includes('_s32x32') ||
                     img.src.includes('s60x60_') ||
                     img.src.includes('s40x40_') ||
-                    img.src.includes('s32x32_')
+                    img.src.includes('s32x32_') ||
+                    img.src.includes('_p148x148') // Skip tiny profile images
+
+                // Skip brand profile images (they're handled separately)
+                const isBrandImage = img.alt && brandName && img.alt.toLowerCase() === brandName.toLowerCase()
 
                 // Get actual image dimensions from URL if available
                 const urlSizeMatch = img.src.match(/s(\d+)x(\d+)/)
@@ -765,22 +876,27 @@ class AdBoardSaver {
                 if (urlSizeMatch) {
                     const width = parseInt(urlSizeMatch[1])
                     const height = parseInt(urlSizeMatch[2])
-                    isLargeEnough = width >= 200 || height >= 200
+                    isLargeEnough = width >= 300 || height >= 300 // Higher threshold for main content
                 } else {
                     // Fallback to DOM dimensions if no URL size info
-                    isLargeEnough = img.offsetWidth >= 100 || img.offsetHeight >= 100
+                    isLargeEnough = img.offsetWidth >= 150 || img.offsetHeight >= 150
                 }
 
-                if (!isSmallImage && isLargeEnough) {
+                if (!isSmallImage && !isBrandImage && isLargeEnough) {
                     mediaUrls.push({
                         url: img.src,
                         type: 'image',
                         source: 'main_image',
                         alt: img.alt || ''
                     })
+                    processedUrls.add(img.src)
+                    imageCount++
+                    // Added image
                 }
             }
         })
+
+        // Media processing complete
 
         // Check for various elements
         const hasImages = images.length > 0
@@ -788,6 +904,224 @@ class AdBoardSaver {
         const hasButtons = container.querySelectorAll('button, [role="button"], a[href]').length > 0
         const hasSponsored = text.includes('Sponsored')
         const hasSeeAdDetails = text.includes('See ad details')
+
+        // Extract brand image URL (next to brand name)
+        let brandImageUrl = ''
+
+        // Strategy: Use the brand name to find the matching profile image
+        // This is more reliable than size-based filtering
+        if (brandName) {
+            const brandImage = container.querySelector(`img[alt="${brandName}"]`)
+            if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
+                brandImageUrl = brandImage.src
+                // Found brand image
+            }
+        }
+
+        // Fallback: If no brand image found by alt text, try size-based approach
+        if (!brandImageUrl) {
+            const brandImageSelectors = [
+                'img[src*="_s60x60"][src*="fbcdn"]',
+                'img[src*="_s40x40"][src*="fbcdn"]',
+                'img[src*="_s32x32"][src*="fbcdn"]'
+            ]
+
+            for (const selector of brandImageSelectors) {
+                const brandImages = container.querySelectorAll(selector)
+                for (const brandImage of brandImages) {
+                    if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
+                        brandImageUrl = brandImage.src
+                        // Found brand image by size
+                        break
+                    }
+                }
+                if (brandImageUrl) break
+            }
+        }
+
+        // Extract page ID from URL
+        let pageId = ''
+        const urlMatch = window.location.href.match(/view_all_page_id=(\d+)/)
+        if (urlMatch) {
+            pageId = urlMatch[1]
+        }
+
+        // Extract ad status (Active/Inactive)
+        let adStatus = ''
+        // Look for status text in the metadata section
+        const statusElements = container.querySelectorAll('span')
+        for (const element of statusElements) {
+            const text = element.textContent?.trim()
+            if (text === 'Active' || text === 'Inactive') {
+                adStatus = text
+                // Found status
+                break
+            }
+        }
+        // Fallback: check for status indicators by icon or other patterns
+        if (!adStatus) {
+            // Look for active/inactive indicators in the container text
+            const containerText = container.textContent || ''
+            if (containerText.includes('Active')) {
+                adStatus = 'Active'
+            } else if (containerText.includes('Inactive')) {
+                adStatus = 'Inactive'
+            }
+        }
+
+        // Extract date information
+        let startDate = ''
+        let endDate = ''
+        let dateRange = ''
+
+        // Look for date patterns in the metadata
+        const containerText = container.textContent || ''
+
+        // Pattern 1: "Started running on [date]"
+        const startDateMatch = containerText.match(/Started running on ([^,\n]+)/i)
+        if (startDateMatch) {
+            startDate = startDateMatch[1].trim()
+            // Found start date
+        }
+
+        // Pattern 2: "Dec 1, 2021 - Dec 3, 2021" (date range)
+        const dateRangeMatch = containerText.match(/([A-Za-z]{3} \d{1,2}, \d{4}) - ([A-Za-z]{3} \d{1,2}, \d{4})/i)
+        if (dateRangeMatch) {
+            startDate = dateRangeMatch[1].trim()
+            endDate = dateRangeMatch[2].trim()
+            dateRange = `${startDate} - ${endDate}`
+            // Found date range
+        }
+
+        // If no structured dates found, look for any date-like patterns
+        if (!startDate && !dateRange) {
+            const spanElements = container.querySelectorAll('span')
+            for (const element of spanElements) {
+                const text = element.textContent?.trim()
+                if (text && (text.match(/\w+ \d{1,2}, \d{4}/) || text.match(/\d{4}-\d{2}-\d{2}/))) {
+                    if (text.includes(' - ')) {
+                        dateRange = text
+                        const parts = text.split(' - ')
+                        startDate = parts[0]?.trim()
+                        endDate = parts[1]?.trim()
+                    } else {
+                        startDate = text
+                    }
+                    // Found date from span
+                    break
+                }
+            }
+        }
+
+        // Extract platforms from icons
+        let platforms = []
+
+        // Look for platform indicators in the Platforms section
+        // Find the "Platforms" text and then look for icons near it
+        const platformsSection = Array.from(container.querySelectorAll('span')).find(span =>
+            span.textContent?.trim() === 'Platforms'
+        )
+
+        if (platformsSection) {
+            // Look for platform icons near the Platforms section
+            const platformContainer = platformsSection.closest('div')
+            if (platformContainer) {
+                // Look for div elements with mask-image styles (Facebook's icon system)
+                const iconElements = platformContainer.querySelectorAll('div[style*="mask-image"]')
+
+                iconElements.forEach(icon => {
+                    const style = icon.getAttribute('style') || ''
+
+                    // Platform detection based on icon mask positions (these are Facebook's internal icon positions)
+                    if (style.includes('-1184px')) {
+                        platforms.push('Facebook')
+                    } else if (style.includes('-419px')) {
+                        platforms.push('Instagram')
+                    } else if (style.includes('-528px')) {
+                        platforms.push('Messenger')
+                    } else if (style.includes('-458px')) {
+                        platforms.push('Audience Network')
+                    }
+                })
+            }
+        }
+
+        // Fallback: look for platform keywords in text
+        if (platforms.length === 0) {
+            if (containerText.includes('Facebook')) platforms.push('Facebook')
+            if (containerText.includes('Instagram')) platforms.push('Instagram')
+            if (containerText.includes('Messenger')) platforms.push('Messenger')
+            if (containerText.includes('Audience Network')) platforms.push('Audience Network')
+        }
+
+        // Remove duplicates
+        platforms = [...new Set(platforms)]
+        // Platforms detected
+
+        // Extract CTA (Call-to-Action) link
+        let cta = ''
+        let ctaUrl = ''
+
+        // Strategy: Look specifically for the main CTA button/link in the ad
+        // Focus on the primary action button, not system links
+
+        // Debug: Log all external links to see what we're working with
+        const allExternalLinks = container.querySelectorAll('a[href*="http"]')
+        // External links found for CTA detection
+
+        // First, try to find the main CTA button by looking for common patterns
+        const ctaSelectors = [
+            // Look for Facebook tracking links (most common for ads)
+            'a[href*="l.facebook.com"]',
+            // Look for direct external links
+            'a[target="_blank"]:not([href*="www.facebook.com"]):not([href*="metastatus.com"])',
+            // Look for buttons with CTA text
+            'div[role="button"] a:not([href*="www.facebook.com"]):not([href*="metastatus.com"])',
+            // Look for any external link that's not Facebook profile/system links
+            'a[href*="http"]:not([href*="www.facebook.com"]):not([href*="metastatus.com"])'
+        ]
+
+        for (const selector of ctaSelectors) {
+            const ctaLinks = container.querySelectorAll(selector)
+            // Checking CTA selector
+
+            for (const link of ctaLinks) {
+                const href = link.href
+                const text = link.textContent?.trim()
+
+                // Skip obvious system links and metadata, but be more lenient
+                if (href &&
+                    !href.includes('metastatus.com') &&
+                    !href.includes('www.facebook.com/') && // Allow l.facebook.com
+                    !text.includes('Library ID') &&
+                    !text.includes('See ad details') &&
+                    !text.includes('System status')) {
+
+                    // Clean up the URL (remove Facebook's tracking parameters)
+                    let cleanUrl = href
+                    if (href.includes('l.facebook.com')) {
+                        const urlMatch = href.match(/u=([^&]+)/)
+                        if (urlMatch) {
+                            cleanUrl = decodeURIComponent(urlMatch[1])
+                        }
+                    }
+
+                    // Check if this looks like a valid CTA
+                    const ctaKeywords = ['shop', 'buy', 'learn', 'sign', 'get', 'download', 'visit', 'try', 'order', 'claim', 'start', 'join', 'now', 'more']
+                    const hasCtaKeyword = ctaKeywords.some(keyword =>
+                        text.toLowerCase().includes(keyword.toLowerCase())
+                    )
+
+                    // Accept if it has CTA keywords OR if it's a non-empty text with reasonable length
+                    if (hasCtaKeyword || (text && text.length > 0 && text.length <= 50)) {
+                        cta = text
+                        ctaUrl = cleanUrl
+                        break
+                    }
+                }
+            }
+            if (cta) break
+        }
 
         const result = {
             libraryId,
@@ -800,21 +1134,37 @@ class AdBoardSaver {
             hasButtons,
             hasSponsored,
             hasSeeAdDetails,
-            size: container.getBoundingClientRect()
+            size: container.getBoundingClientRect(),
+            brandImageUrl,
+            pageId,
+            adStatus,
+            startDate,
+            endDate,
+            dateRange,
+            platforms,
+            cta,
+            ctaUrl
         }
 
-        console.log('📝 Analyzed ad card:', {
+        // Log the complete API payload that would be sent
+        console.log('📝 API Payload for ad:', {
+            pageId,
+            adStatus,
             libraryId,
+            startDate,
+            endDate,
+            dateRange,
+            platforms,
+            brandImageUrl,
             brandName,
-            adTextLength: adText.length,
-            adText: adText,
-            adTextWithBreaks: adText.replace(/\n/g, '\\n'), // Show line breaks in console
-            mediaCount: mediaUrls.length,
-            mediaTypes: mediaUrls.map(m => `${m.type}(${m.source})`).join(', '),
-            mainMediaUrl: mediaUrls[0]?.url || 'none',
-            totalImagesFound: images.length,
-            hasSponsored,
-            hasSeeAdDetails
+            adText,
+            headline: adText.substring(0, 100) + (adText.length > 100 ? '...' : ''),
+            mediaDetails: mediaUrls,
+            cta,
+            ctaUrl,
+            fbAdId: libraryId, // Keep for backward compatibility
+            firstSeenDate: new Date().toISOString(),
+            lastSeenDate: new Date().toISOString()
         })
 
         // Debug: Log all image URLs found for troubleshooting
@@ -1126,7 +1476,8 @@ class AdBoardSaver {
                     headline: adCard.adText.substring(0, 100),
                     adText: adCard.adText,
                     description: '',
-                    cta: '',
+                    cta: adCard.cta || '',
+                    ctaUrl: adCard.ctaUrl || '',
                     mediaDetails: adCard.mediaDetails,
                     firstSeenDate: new Date().toISOString(),
                     lastSeenDate: new Date().toISOString()
@@ -1162,10 +1513,13 @@ class AdBoardSaver {
                     headline: adCard.adText.substring(0, 100),
                     adText: adCard.adText,
                     description: '',
-                    cta: '',
+                    cta: adCard.cta || '',
+                    ctaUrl: adCard.ctaUrl || '',
                     mediaDetails: adCard.mediaDetails,
                     firstSeenDate: new Date().toISOString(),
-                    lastSeenDate: new Date().toISOString()
+                    lastSeenDate: new Date().toISOString(),
+                    pageId: adCard.pageId,
+                    brandImageUrl: adCard.brandImageUrl
                 }
             }
 
@@ -1229,10 +1583,18 @@ class AdBoardSaver {
         let debounceTimer = null
 
         const observer = new MutationObserver(() => {
+            if (this.isObserving) return // Prevent multiple simultaneous observations
+
             clearTimeout(debounceTimer)
             debounceTimer = setTimeout(() => {
-                console.log('🔄 AdBoard: Page changed, re-detecting ads...')
+                const observerCallId = Date.now()
+                console.log('🔄 AdBoard: Page changed, re-detecting ads... (Observer Call ID:', observerCallId, ')')
+                this.isObserving = true
                 this.detectAndLogAdCards()
+                setTimeout(() => {
+                    this.isObserving = false
+                    console.log('🔄 AdBoard: Observer reset (Observer Call ID:', observerCallId, ')')
+                }, 1000) // Reset after 1 second
             }, 2000)
         })
 
@@ -1424,11 +1786,23 @@ class AdBoardSaver {
     }
 }
 
-// Initialize when page loads
+// Initialize when page loads - ensure only one instance
+let adBoardInstance = null
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-        new AdBoardSaver()
+        if (!adBoardInstance) {
+            console.log('🚀 AdBoard: Initializing on DOMContentLoaded...')
+            adBoardInstance = new AdBoardSaver()
+        } else {
+            console.log('⚠️ AdBoard: Instance already exists, skipping...')
+        }
     })
 } else {
-    new AdBoardSaver()
+    if (!adBoardInstance) {
+        console.log('🚀 AdBoard: Initializing immediately...')
+        adBoardInstance = new AdBoardSaver()
+    } else {
+        console.log('⚠️ AdBoard: Instance already exists, skipping...')
+    }
 }
