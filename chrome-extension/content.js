@@ -959,14 +959,23 @@ class AdBoardSaver {
             if (!url || !url.includes('fbcdn')) return url
 
             try {
-                // Remove size constraints from Facebook CDN URLs
-                // Replace _s60x60, _s40x40, etc. with larger sizes
                 let improvedUrl = url
-                    .replace(/_s\d+x\d+/g, '_s400x400') // Upgrade to 400x400
-                    .replace(/stp=dst-jpg_s\d+x\d+/g, 'stp=dst-jpg_s400x400') // Upgrade stp parameter
+
+                // Handle different Facebook image URL patterns
+                if (url.includes('t39.30808-1')) {
+                    // Page header/cover images - upgrade p148x148 to p400x400
+                    improvedUrl = url
+                        .replace(/stp=dst-jpg_p\d+x\d+/g, 'stp=dst-jpg_p400x400')
+                        .replace(/_p\d+x\d+/g, '_p400x400')
+                } else {
+                    // Regular profile images - upgrade s60x60 to s400x400
+                    improvedUrl = url
+                        .replace(/_s\d+x\d+/g, '_s400x400')
+                        .replace(/stp=dst-jpg_s\d+x\d+/g, 'stp=dst-jpg_s400x400')
+                }
 
                 // Validate the URL still looks correct
-                if (improvedUrl.includes('fbcdn') && improvedUrl.includes('_s400x400')) {
+                if (improvedUrl.includes('fbcdn') && (improvedUrl.includes('400x400') || improvedUrl.includes('p400x400'))) {
                     return improvedUrl
                 }
 
@@ -981,13 +990,21 @@ class AdBoardSaver {
         // Extract brand image URL (next to brand name)
         let brandImageUrl = ''
 
-        // Strategy: Use the brand name to find the matching profile image
+        // Strategy 1: Try to get brand image from page header (use original URL - no quality upgrade)
+        // Look for the main page profile image at the top of the page
+        const pageHeaderImage = document.querySelector('img[height="80"][width="80"], img[src*="t39.30808-1"]')
+        if (pageHeaderImage && pageHeaderImage.src && pageHeaderImage.src.includes('fbcdn')) {
+            brandImageUrl = pageHeaderImage.src // Use original URL to avoid signature mismatch
+            console.log('🎯 Found page header brand image (original):', brandImageUrl.substring(0, 100) + '...')
+        }
+
+        // Strategy 2: Use the brand name to find the matching profile image (fallback)
         // This is more reliable than size-based filtering
-        if (brandName) {
+        if (!brandImageUrl && brandName) {
             const brandImage = container.querySelector(`img[alt="${brandName}"]`)
             if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
-                brandImageUrl = getHighQualityBrandImageUrl(brandImage.src)
-                // Found brand image
+                brandImageUrl = brandImage.src // Use original URL to avoid signature mismatch
+                console.log('🎯 Found ad-level brand image (original):', brandImageUrl.substring(0, 100) + '...')
             }
         }
 
@@ -1003,8 +1020,8 @@ class AdBoardSaver {
                 const brandImages = container.querySelectorAll(selector)
                 for (const brandImage of brandImages) {
                     if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
-                        brandImageUrl = getHighQualityBrandImageUrl(brandImage.src)
-                        // Found brand image by size
+                        brandImageUrl = brandImage.src // Use original URL to avoid signature mismatch
+                        console.log('🎯 Found brand image by size (original):', brandImageUrl.substring(0, 100) + '...')
                         break
                     }
                 }

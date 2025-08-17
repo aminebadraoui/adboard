@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
                     // Upload brand image to Cloudinary
                     const brandImageResult = await uploadImageFromUrl(adData.brandImageUrl, {
                         orgId,
-                        assetId: 'brand_' + effectivePageId
+                        assetId: `brand-${effectivePageId}`
                     })
 
                     // Create new brand
@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
                         console.log('🔄 ASSETS/FB: Updating brand image to Cloudinary...')
                         const brandImageResult = await uploadImageFromUrl(adData.brandImageUrl, {
                             orgId,
-                            assetId: 'brand_' + effectivePageId
+                            assetId: `brand-${effectivePageId}`
                         })
 
                         // Update existing brand with Cloudinary URL
