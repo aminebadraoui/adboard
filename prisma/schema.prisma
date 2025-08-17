@@ -130,9 +130,15 @@ model Asset {
   adUrl         String       @map("ad_url")
   headline      String?
   cta           String?
+  ctaUrl        String?      @map("cta_url")
   brandName     String?      @map("brand_name")
   adText        String?      @map("ad_text")
   description   String?
+  adStatus      String?      @map("ad_status") // Active/Inactive
+  startDate     String?      @map("start_date") // Store as string to preserve original format
+  endDate       String?      @map("end_date")
+  dateRange     String?      @map("date_range")
+  platforms     String[]     @default([]) // Array of platforms
   firstSeenDate DateTime?    @map("first_seen_date")
   lastSeenDate  DateTime?    @map("last_seen_date")
   runtimeDays   Int?         @map("runtime_days")
@@ -154,6 +160,7 @@ model Asset {
   @@index([platform])
   @@index([fbAdId])
   @@index([brandName])
+  @@index([adStatus])
   @@index([createdAt])
   @@map("assets")
 }

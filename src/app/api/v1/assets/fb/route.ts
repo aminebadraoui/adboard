@@ -28,22 +28,32 @@ const createAssetSchema = z.object({
     tags: z.array(z.string()).optional().default([]),
     // Ad data extracted by Chrome extension
     adData: z.object({
-        fbAdId: z.string(),
+        pageId: z.string().optional(), // Page ID
+        adStatus: z.string().optional(), // Active/Inactive
+        libraryId: z.string().optional(), // New naming for ad ID
+        fbAdId: z.string().optional(), // Legacy naming for ad ID
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        dateRange: z.string().optional(),
+        platforms: z.array(z.string()).optional().default([]),
+        brandImageUrl: z.string().optional(),
         brandName: z.string(),
-        headline: z.string().optional(),
         adText: z.string().optional(),
-        description: z.string().optional(),
-        cta: z.string().optional(),
-        pageId: z.string().optional(), // Added for brand processing
-        brandImageUrl: z.string().optional(), // Added for brand processing
+        headline: z.string().optional(),
         mediaDetails: z.array(z.object({
             url: z.string(),
             type: z.enum(['image', 'video']),
             source: z.string(), // e.g., 'video_src', 'video_poster', 'main_image'
             alt: z.string().optional(),
         })).optional().default([]),
+        cta: z.string().optional(),
+        ctaUrl: z.string().optional(),
         firstSeenDate: z.string().optional(), // ISO date string
         lastSeenDate: z.string().optional(), // ISO date string
+        description: z.string().optional(), // Keep for backward compatibility
+    }).refine(data => data.libraryId || data.fbAdId, {
+        message: "Either libraryId or fbAdId must be provided",
+        path: ["libraryId"]
     }),
 })
 
@@ -127,8 +137,11 @@ export async function POST(req: NextRequest) {
             console.log('✅ All board IDs validated for org:', orgId)
         }
 
-        // Use fbAdId from the extracted adData
-        const adId = adData.fbAdId
+        // Use libraryId from the extracted adData (fallback to fbAdId for backward compatibility)
+        const adId = adData.libraryId || adData.fbAdId
+        if (!adId) {
+            return NextResponse.json({ error: 'Missing Facebook ad ID' }, { status: 400 })
+        }
         console.log('✅ Using Facebook ad ID from extension:', adId)
 
         // Check if asset already exists for this ad ID and org
@@ -181,8 +194,15 @@ export async function POST(req: NextRequest) {
                     brandName: existingAsset.brandName,
                     headline: existingAsset.headline,
                     cta: existingAsset.cta,
+                    ctaUrl: existingAsset.ctaUrl,
                     adText: existingAsset.adText,
                     description: existingAsset.description,
+                    adStatus: existingAsset.adStatus,
+                    startDate: existingAsset.startDate,
+                    endDate: existingAsset.endDate,
+                    dateRange: existingAsset.dateRange,
+                    platforms: existingAsset.platforms,
+                    adUrl: existingAsset.adUrl,
                     media: existingAsset.files.map(f => ({ url: f.url, type: f.type })),
                     boardIds: [...existingBoardIds, ...newBoardIds],
                     runtimeDays: existingAsset.runtimeDays,
@@ -208,9 +228,10 @@ export async function POST(req: NextRequest) {
         // Handle brand data if provided
         let brandId = null
         let brandData = null
-        if (adData.pageId && adData.brandName && adData.brandImageUrl) {
+        const effectivePageId = adData.pageId || pageId // Use pageId from adData or fallback to top-level pageId
+        if (effectivePageId && adData.brandName && adData.brandImageUrl) {
             console.log('🎯 ASSETS/FB: Processing brand data:', {
-                pageId: adData.pageId,
+                pageId: effectivePageId,
                 brandName: adData.brandName,
                 hasImage: !!adData.brandImageUrl
             })
@@ -219,7 +240,7 @@ export async function POST(req: NextRequest) {
             let existingBrand = await prisma.brand.findUnique({
                 where: {
                     fbPageId_orgId: {
-                        fbPageId: adData.pageId,
+                        fbPageId: effectivePageId,
                         orgId
                     }
                 }
@@ -232,13 +253,13 @@ export async function POST(req: NextRequest) {
                     // Upload brand image to Cloudinary
                     const brandImageResult = await uploadImageFromUrl(adData.brandImageUrl, {
                         orgId,
-                        assetId: 'brand_' + adData.pageId
+                        assetId: 'brand_' + effectivePageId
                     })
 
                     // Create new brand
                     existingBrand = await prisma.brand.create({
                         data: {
-                            fbPageId: adData.pageId,
+                            fbPageId: effectivePageId,
                             name: adData.brandName,
                             imageUrl: brandImageResult.secure_url,
                             cloudinaryId: brandImageResult.public_id,
@@ -266,17 +287,23 @@ export async function POST(req: NextRequest) {
         }
 
         const processedAdData = {
-            fbAdId: adData.fbAdId,
+            fbAdId: adId,
             brandName: adData.brandName,
             headline: adData.headline || '',
             adText: adData.adText || '',
             description: adData.description || '',
             cta: adData.cta || '',
-            adUrl: `https://www.facebook.com/ads/library/?id=${adData.fbAdId}`, // Construct URL from fbAdId
-            originalUrl: `https://www.facebook.com/ads/library/?id=${adData.fbAdId}`,
+            ctaUrl: adData.ctaUrl || '',
+            adStatus: adData.adStatus || '',
+            startDate: adData.startDate || '',
+            endDate: adData.endDate || '',
+            dateRange: adData.dateRange || '',
+            platforms: adData.platforms || [],
+            adUrl: `https://www.facebook.com/ads/library/?id=${adId}`, // Construct URL from adId
+            originalUrl: `https://www.facebook.com/ads/library/?id=${adId}`,
             firstSeenDate: adData.firstSeenDate ? new Date(adData.firstSeenDate) : undefined,
             lastSeenDate: adData.lastSeenDate ? new Date(adData.lastSeenDate) : undefined,
-            fbPageId: pageId || '',
+            fbPageId: effectivePageId || '',
             mediaDetails: adData.mediaDetails || []
         }
 
@@ -297,9 +324,15 @@ export async function POST(req: NextRequest) {
                 adUrl: processedAdData.adUrl,
                 headline: processedAdData.headline,
                 cta: processedAdData.cta,
+                ctaUrl: processedAdData.ctaUrl,
                 brandName: processedAdData.brandName,
                 adText: processedAdData.adText,
                 description: processedAdData.description,
+                adStatus: processedAdData.adStatus,
+                startDate: processedAdData.startDate,
+                endDate: processedAdData.endDate,
+                dateRange: processedAdData.dateRange,
+                platforms: processedAdData.platforms,
                 firstSeenDate: processedAdData.firstSeenDate,
                 lastSeenDate: processedAdData.lastSeenDate,
                 runtimeDays: calculateRuntimeDays(processedAdData.firstSeenDate, processedAdData.lastSeenDate),
@@ -443,8 +476,14 @@ export async function POST(req: NextRequest) {
             brandName: asset.brandName,
             headline: asset.headline,
             cta: asset.cta,
+            ctaUrl: asset.ctaUrl,
             adText: asset.adText,
             description: asset.description,
+            adStatus: asset.adStatus,
+            startDate: asset.startDate,
+            endDate: asset.endDate,
+            dateRange: asset.dateRange,
+            platforms: asset.platforms,
             adUrl: asset.adUrl,
             media: storedFiles,
             boardIds: finalBoardIds,

@@ -655,7 +655,18 @@ class AdBoardSaver {
                     // Make sure it's not a duplicate (same ID already processed)
                     const isUnique = !potentialAdCards.some(card => card.libraryId === libraryId)
 
-                    if (hasGoodSize && reasonableLinkCount && isUnique) {
+                    // Additional check for content similarity to avoid processing the same ad multiple times
+                    let isContentUnique = true
+                    if (libraryId.startsWith('sponsored_')) {
+                        const adText = div.textContent || ''
+                        isContentUnique = !potentialAdCards.some(card => {
+                            const existingText = card.container?.textContent || ''
+                            const similarity = this.calculateTextSimilarity(adText, existingText)
+                            return similarity > 0.8
+                        })
+                    }
+
+                    if (hasGoodSize && reasonableLinkCount && isUnique && isContentUnique) {
                         foundAdCards.push(div)
                     }
                 }
@@ -673,9 +684,37 @@ class AdBoardSaver {
                 return el ? el.innerText.replace(label, "").trim() : null;
             };
 
-            const libraryId = getTextByLabel("Library ID:") ||
-                getTextByLabel("library id:") ||
-                `ad_${index}_${Date.now()}`
+            // Enhanced Library ID extraction
+            let libraryId = getTextByLabel("Library ID:") || getTextByLabel("library id:")
+
+            // Try alternative methods to find Library ID
+            if (!libraryId) {
+                // Look for pattern "Library ID: 123456" in text content
+                const text = div.textContent || ''
+                const libraryIdMatch = text.match(/Library ID:\s*(\d+)/i)
+                if (libraryIdMatch) {
+                    libraryId = libraryIdMatch[1]
+                }
+            }
+
+            // Still no Library ID found, but this might be a valid ad
+            if (!libraryId) {
+                // Check if this content is already captured by a previous ad
+                const adText = div.textContent || ''
+                const isDuplicate = potentialAdCards.some(card => {
+                    const existingText = card.container?.textContent || ''
+                    // Check if 80% of the text content overlaps
+                    const similarity = this.calculateTextSimilarity(adText, existingText)
+                    return similarity > 0.8
+                })
+
+                if (isDuplicate) {
+                    return // Skip this duplicate content
+                }
+
+                // Generate fallback ID only if this seems like a genuine unique ad
+                libraryId = `ad_${index}_${Date.now()}`
+            }
 
             // Skip verbose container logging - focus on API payload
 
@@ -1471,16 +1510,25 @@ class AdBoardSaver {
             const requestData = {
                 boardIds: [boardId], // Send as array
                 adData: {
-                    fbAdId: adCard.libraryId,
+                    pageId: adCard.pageId,
+                    adStatus: adCard.adStatus,
+                    libraryId: adCard.libraryId,
+                    startDate: adCard.startDate,
+                    endDate: adCard.endDate,
+                    dateRange: adCard.dateRange,
+                    platforms: adCard.platforms,
+                    brandImageUrl: adCard.brandImageUrl,
                     brandName: adCard.brandName,
-                    headline: adCard.adText.substring(0, 100),
                     adText: adCard.adText,
-                    description: '',
+                    headline: adCard.adText ? adCard.adText.substring(0, 100) : '',
+                    mediaDetails: adCard.mediaDetails,
                     cta: adCard.cta || '',
                     ctaUrl: adCard.ctaUrl || '',
-                    mediaDetails: adCard.mediaDetails,
                     firstSeenDate: new Date().toISOString(),
-                    lastSeenDate: new Date().toISOString()
+                    lastSeenDate: new Date().toISOString(),
+                    // Legacy fields for backward compatibility
+                    fbAdId: adCard.libraryId,
+                    description: ''
                 }
             }
 
@@ -1508,18 +1556,25 @@ class AdBoardSaver {
             const requestData = {
                 boardIds: boardIds, // Send all selected board IDs
                 adData: {
-                    fbAdId: adCard.libraryId,
+                    pageId: adCard.pageId,
+                    adStatus: adCard.adStatus,
+                    libraryId: adCard.libraryId,
+                    startDate: adCard.startDate,
+                    endDate: adCard.endDate,
+                    dateRange: adCard.dateRange,
+                    platforms: adCard.platforms,
+                    brandImageUrl: adCard.brandImageUrl,
                     brandName: adCard.brandName,
-                    headline: adCard.adText.substring(0, 100),
                     adText: adCard.adText,
-                    description: '',
+                    headline: adCard.adText ? adCard.adText.substring(0, 100) : '',
+                    mediaDetails: adCard.mediaDetails,
                     cta: adCard.cta || '',
                     ctaUrl: adCard.ctaUrl || '',
-                    mediaDetails: adCard.mediaDetails,
                     firstSeenDate: new Date().toISOString(),
                     lastSeenDate: new Date().toISOString(),
-                    pageId: adCard.pageId,
-                    brandImageUrl: adCard.brandImageUrl
+                    // Legacy fields for backward compatibility
+                    fbAdId: adCard.libraryId,
+                    description: ''
                 }
             }
 
@@ -1614,6 +1669,26 @@ class AdBoardSaver {
             hash = hash & hash // Convert to 32-bit integer
         }
         return hash
+    }
+
+    calculateTextSimilarity(text1, text2) {
+        if (!text1 || !text2) return 0
+
+        // Normalize texts (remove extra whitespace, convert to lowercase)
+        const normalize = (text) => text.replace(/\s+/g, ' ').trim().toLowerCase()
+        const norm1 = normalize(text1)
+        const norm2 = normalize(text2)
+
+        if (norm1 === norm2) return 1
+
+        // Simple Jaccard similarity using word sets
+        const words1 = new Set(norm1.split(' '))
+        const words2 = new Set(norm2.split(' '))
+
+        const intersection = new Set([...words1].filter(word => words2.has(word)))
+        const union = new Set([...words1, ...words2])
+
+        return intersection.size / union.size
     }
 
     // Wait for extension to be fully ready with retries
