@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getAuthenticatedUser, getOrCreateDefaultOrg, checkOrgAccess } from '@/lib/auth-helpers'
 // Use the working API endpoint approach instead
 import { validateFacebookAdUrl, calculateRuntimeDays } from '@/lib/facebook-scraper'
-import { uploadImageFromUrl, uploadVideoFromUrl, cloudinary } from '@/lib/cloudinary'
+import { uploadImageFromUrl, uploadVideoFromUrl, cloudinary, getVideoThumbnailUrl, getThumbnailUrl } from '@/lib/cloudinary'
 import { prisma } from '@/lib/prisma'
 
 // OPTIONS handler for CORS preflight
@@ -47,6 +47,7 @@ const createAssetSchema = z.object({
             alt: z.string().optional(),
         })).optional().default([]),
         cta: z.string().optional(),
+        ctaType: z.string().optional(),
         ctaUrl: z.string().optional(),
         firstSeenDate: z.string().optional(), // ISO date string
         lastSeenDate: z.string().optional(), // ISO date string
@@ -192,8 +193,10 @@ export async function POST(req: NextRequest) {
                     fbAdId: existingAsset.fbAdId,
                     fbPageId: existingAsset.fbPageId,
                     brandName: existingAsset.brandName,
+                    brandImageUrl: existingAsset.brandImageUrl,
                     headline: existingAsset.headline,
                     cta: existingAsset.cta,
+                    ctaType: existingAsset.ctaType,
                     ctaUrl: existingAsset.ctaUrl,
                     adText: existingAsset.adText,
                     description: existingAsset.description,
@@ -274,6 +277,31 @@ export async function POST(req: NextRequest) {
                 }
             } else {
                 console.log('✅ ASSETS/FB: Found existing brand:', existingBrand.fbPageId)
+
+                // Check if existing brand needs image upload to Cloudinary
+                if (adData.brandImageUrl && (!existingBrand.imageUrl || !existingBrand.imageUrl.includes('cloudinary.com'))) {
+                    try {
+                        console.log('🔄 ASSETS/FB: Updating brand image to Cloudinary...')
+                        const brandImageResult = await uploadImageFromUrl(adData.brandImageUrl, {
+                            orgId,
+                            assetId: 'brand_' + effectivePageId
+                        })
+
+                        // Update existing brand with Cloudinary URL
+                        existingBrand = await prisma.brand.update({
+                            where: { fbPageId: existingBrand.fbPageId },
+                            data: {
+                                imageUrl: brandImageResult.secure_url,
+                                cloudinaryId: brandImageResult.public_id
+                            }
+                        })
+
+                        console.log('✅ ASSETS/FB: Brand image updated to Cloudinary')
+                    } catch (error) {
+                        console.error('❌ ASSETS/FB: Failed to update brand image:', error)
+                        // Continue with existing brand data if upload fails
+                    }
+                }
             }
 
             if (existingBrand) {
@@ -289,10 +317,12 @@ export async function POST(req: NextRequest) {
         const processedAdData = {
             fbAdId: adId,
             brandName: adData.brandName,
+            brandImageUrl: brandData?.imageUrl || adData.brandImageUrl, // Use Cloudinary URL if available
             headline: adData.headline || '',
             adText: adData.adText || '',
             description: adData.description || '',
             cta: adData.cta || '',
+            ctaType: adData.ctaType || '',
             ctaUrl: adData.ctaUrl || '',
             adStatus: adData.adStatus || '',
             startDate: adData.startDate || '',
@@ -324,8 +354,10 @@ export async function POST(req: NextRequest) {
                 adUrl: processedAdData.adUrl,
                 headline: processedAdData.headline,
                 cta: processedAdData.cta,
+                ctaType: processedAdData.ctaType,
                 ctaUrl: processedAdData.ctaUrl,
                 brandName: processedAdData.brandName,
+                brandImageUrl: processedAdData.brandImageUrl,
                 adText: processedAdData.adText,
                 description: processedAdData.description,
                 adStatus: processedAdData.adStatus,
@@ -349,17 +381,69 @@ export async function POST(req: NextRequest) {
                 const mediaItem = processedAdData.mediaDetails[i]
 
                 try {
-                    // Store media file metadata in database WITHOUT uploading to Cloudinary
+                    let uploadedUrl = mediaItem.url
+                    let cloudinaryId = `not_uploaded_${asset.id}_${i}_${mediaItem.source}`
+                    let width = null
+                    let height = null
+                    let fileSize = null
+                    let duration = null
+
+                    // Upload media file to Cloudinary
+                    try {
+                        console.log(`📤 Uploading ${mediaItem.type} to Cloudinary: ${mediaItem.source}`)
+
+                        let uploadResult
+                        if (mediaItem.type === 'video') {
+                            uploadResult = await uploadVideoFromUrl(mediaItem.url, {
+                                orgId,
+                                assetId: asset.id,
+                                folder: `${orgId}/${asset.id}/media`
+                            })
+                        } else {
+                            uploadResult = await uploadImageFromUrl(mediaItem.url, {
+                                orgId,
+                                assetId: asset.id,
+                                folder: `${orgId}/${asset.id}/media`
+                            })
+                        }
+
+                        uploadedUrl = uploadResult.secure_url
+                        cloudinaryId = uploadResult.public_id
+                        width = uploadResult.width
+                        height = uploadResult.height
+                        fileSize = uploadResult.bytes
+                        duration = uploadResult.duration || null
+
+                        console.log(`✅ Successfully uploaded ${mediaItem.type} to Cloudinary: ${uploadResult.public_id}`)
+                    } catch (uploadError) {
+                        const errorMessage = uploadError instanceof Error ? uploadError.message : 'Unknown error'
+                        console.warn(`⚠️ Failed to upload ${mediaItem.type} to Cloudinary, using original URL:`, errorMessage)
+                        // Continue with original URL if upload fails
+                    }
+
+                    // Generate thumbnail URL based on file type
+                    let thumbnailUrl = null
+                    if (cloudinaryId) {
+                        if (mediaItem.type === 'video') {
+                            thumbnailUrl = getVideoThumbnailUrl(cloudinaryId)
+                        } else {
+                            thumbnailUrl = getThumbnailUrl(cloudinaryId)
+                        }
+                    }
+
+                    // Store media file metadata in database
                     const assetFile = await prisma.assetFile.create({
                         data: {
                             assetId: asset.id,
                             type: mediaItem.type,
-                            url: mediaItem.url, // Use original URL
-                            cloudinaryId: `not_uploaded_${asset.id}_${i}_${mediaItem.source}`, // Mark as not uploaded
-                            width: null,
-                            height: null,
-                            fileSize: null,
-                            duration: null,
+                            url: uploadedUrl,
+                            cloudinaryId: cloudinaryId,
+                            thumbnailUrl: thumbnailUrl,
+                            source: mediaItem.source || null,
+                            width: width,
+                            height: height,
+                            fileSize: fileSize,
+                            duration: duration,
                             order: i
                         }
                     })
@@ -371,14 +455,14 @@ export async function POST(req: NextRequest) {
                         alt: mediaItem.alt || ''
                     })
 
-                    console.log(`📁 Stored media file (not uploaded): ${mediaItem.type} - ${mediaItem.source}`)
+                    console.log(`📁 Stored media file: ${mediaItem.type} - ${mediaItem.source} (${uploadedUrl.includes('cloudinary.com') ? 'uploaded' : 'original URL'})`)
                 } catch (error) {
-                    console.error(`❌ Failed to store media file ${mediaItem.url}:`, error)
+                    console.error(`❌ Failed to process media file ${mediaItem.url}:`, error)
                     // Continue with other files even if one fails
                 }
             }
 
-            console.log(`📁 Processed ${storedFiles.length} media files (stored as URLs, not uploaded to Cloudinary)`)
+            console.log(`📁 Processed ${storedFiles.length} media files (uploaded to Cloudinary where possible)`)
         }
 
         // Add to boards
@@ -474,8 +558,10 @@ export async function POST(req: NextRequest) {
             fbAdId: asset.fbAdId,
             fbPageId: asset.fbPageId,
             brandName: asset.brandName,
+            brandImageUrl: asset.brandImageUrl,
             headline: asset.headline,
             cta: asset.cta,
+            ctaType: asset.ctaType,
             ctaUrl: asset.ctaUrl,
             adText: asset.adText,
             description: asset.description,

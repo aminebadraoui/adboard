@@ -130,8 +130,10 @@ model Asset {
   adUrl         String       @map("ad_url")
   headline      String?
   cta           String?
+  ctaType       String?      @map("cta_type")
   ctaUrl        String?      @map("cta_url")
   brandName     String?      @map("brand_name")
+  brandImageUrl String?      @map("brand_image_url")
   adText        String?      @map("ad_text")
   description   String?
   adStatus      String?      @map("ad_status") // Active/Inactive
@@ -188,6 +190,7 @@ model AssetFile {
   url          String
   cloudinaryId String   @map("cloudinary_id")
   thumbnailUrl String?  @map("thumbnail_url")
+  source       String? // e.g., 'video_src', 'video_poster', 'main_image'
   width        Int?
   height       Int?
   fileSize     Int?     @map("file_size")

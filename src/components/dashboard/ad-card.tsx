@@ -1,4 +1,5 @@
-import { formatDate, truncateText } from '@/lib/utils'
+import React from 'react'
+import { formatDate } from '@/lib/utils'
 import { Play, ExternalLink, Calendar, Shield, ShieldCheck } from 'lucide-react'
 
 interface Asset {
@@ -8,6 +9,7 @@ interface Asset {
     fbPageId?: string | null
     headline?: string | null
     brandName?: string | null
+    brandImageUrl?: string | null
     adText?: string | null
     adStatus?: string | null
     startDate?: string | null
@@ -15,6 +17,7 @@ interface Asset {
     dateRange?: string | null
     platforms?: string[] | null
     cta?: string | null
+    ctaType?: string | null
     ctaUrl?: string | null
     adUrl?: string | null
     createdAt: string
@@ -28,6 +31,7 @@ interface Asset {
         type: string
         url: string
         thumbnailUrl?: string | null
+        source?: string | null
     }>
     tags: Array<{
         id: string
@@ -38,11 +42,49 @@ interface Asset {
 
 interface AdCardProps {
     asset: Asset
+    onClick?: () => void
+    highQualityImages?: boolean // Use full quality images instead of thumbnails
 }
 
-export function AdCard({ asset }: AdCardProps) {
-    const primaryFile = asset.files[0]
-    const isVideo = primaryFile?.type === 'video'
+export function AdCard({ asset, onClick, highQualityImages = false }: AdCardProps) {
+    // Find video file explicitly by source or type
+    const videoFile = asset.files.find(file =>
+        file.type === 'video' || file.source === 'video_src'
+    )
+
+    // Find video poster file explicitly
+    const videoPosterFile = asset.files.find(file =>
+        file.source === 'video_poster'
+    )
+
+    // Determine if this is a video ad - either we have a video file OR we have a video_poster (which implies a video)
+    const isVideo = !!videoFile || !!videoPosterFile
+
+    // For non-video ads, use the first file as primary
+    const primaryFile = isVideo ? (videoPosterFile || videoFile) : asset.files[0]
+
+    // State for video playback
+    const [isPlayingVideo, setIsPlayingVideo] = React.useState(false)
+
+    // Function to get optimal image URL based on context
+    const getImageUrl = (file: any) => {
+        if (!file) return ''
+
+        // For mood board, always use high quality images to show full visual detail
+        // If it's a Cloudinary URL, we can transform it for optimal quality
+        if (file.url && file.url.includes('cloudinary.com')) {
+            if (highQualityImages) {
+                // For modal: Transform Cloudinary URL for highest quality
+                return file.url.replace('/upload/', '/upload/q_auto:best,f_auto,w_800,h_800,c_limit/')
+            } else {
+                // For card view: Use good quality but not size-limited for mood board
+                return file.url.replace('/upload/', '/upload/q_auto:good,f_auto/')
+            }
+        }
+
+        // For non-Cloudinary URLs, always use the original
+        return file.url
+    }
 
     // Create Facebook Ad Library URL for brand
     const brandAdLibraryUrl = asset.brand?.fbPageId || asset.fbPageId
@@ -61,7 +103,7 @@ export function AdCard({ asset }: AdCardProps) {
     }
 
     return (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow flex flex-col break-inside-avoid">
             {/* 1. Active Status */}
             {asset.adStatus && (
                 <div className="px-4 pt-3 pb-2">
@@ -79,108 +121,108 @@ export function AdCard({ asset }: AdCardProps) {
                 </div>
             )}
 
-            {/* 2. Date of Running */}
-            {getDateDisplay() && (
-                <div className="px-4 pb-2">
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <Calendar className="h-4 w-4" />
-                        <span>{getDateDisplay()}</span>
-                    </div>
-                </div>
-            )}
 
-            {/* 3. Platforms */}
-            {asset.platforms && asset.platforms.length > 0 && (
-                <div className="px-4 pb-3">
-                    <div className="flex flex-wrap gap-1">
-                        {asset.platforms.map((platform) => (
-                            <span
-                                key={platform}
-                                className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                            >
-                                {platform}
-                            </span>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {/* 4. Brand Name and Image (linking to FB Ad Library) */}
-            {(asset.brand || asset.brandName) && (
-                <div className="px-4 pb-3">
-                    {brandAdLibraryUrl ? (
-                        <a
-                            href={brandAdLibraryUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-3 hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
-                        >
-                            {/* Brand image */}
-                            {asset.brand?.imageUrl && (
-                                <img
-                                    src={asset.brand.imageUrl}
-                                    alt={asset.brand.name}
-                                    className="w-10 h-10 rounded-full object-cover"
-                                />
-                            )}
-                            {/* Brand name and page ID */}
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold text-gray-900 truncate">
-                                    {asset.brand?.name || asset.brandName}
-                                </div>
-                                {(asset.brand?.fbPageId || asset.fbPageId) && (
-                                    <div className="text-xs text-gray-500">
-                                        Page ID: {asset.brand?.fbPageId || asset.fbPageId}
+
+
+
+
+            {/* 5. Media (Image or Video) - Prominent for mood board */}
+            <div
+                className={`bg-gray-100 relative ${onClick && !isPlayingVideo ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
+                onClick={isPlayingVideo ? undefined : () => {
+                    setIsPlayingVideo(false); // Reset video state when opening modal
+                    onClick && onClick();
+                }}
+                style={{ width: '100%', height: 'auto' }}
+            >
+                {primaryFile ? (
+                    <>
+                        {isVideo ? (
+                            <div className="relative">
+                                {!isPlayingVideo ? (
+                                    // Show poster image with play button overlay
+                                    <>
+                                        <img
+                                            src={videoPosterFile ? getImageUrl(videoPosterFile) : (videoFile ? getImageUrl(videoFile) : '')}
+                                            alt={asset.headline || 'Video thumbnail'}
+                                            className="w-full h-auto"
+                                            style={{
+                                                maxHeight: 'none',
+                                                height: 'auto',
+                                                width: '100%',
+                                                display: 'block'
+                                            }}
+                                        />
+                                        {videoFile && (
+                                            <div
+                                                className="absolute inset-0 flex items-center justify-center cursor-pointer hover:bg-black hover:bg-opacity-10 transition-all"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setIsPlayingVideo(true);
+                                                }}
+                                            >
+                                                <div className="bg-black bg-opacity-70 rounded-full p-4 hover:bg-opacity-90 transition-all">
+                                                    <Play className="h-8 w-8 text-white" fill="currentColor" />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    // Show video player when playing
+                                    <div className="relative">
+                                        <video
+                                            className="w-full h-auto"
+                                            controls
+                                            autoPlay
+                                            preload="metadata"
+                                            onEnded={() => setIsPlayingVideo(false)}
+                                        >
+                                            <source src={videoFile?.url} type="video/mp4" />
+                                            Your browser does not support the video tag.
+                                        </video>
+                                        <button
+                                            className="absolute top-2 right-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded hover:bg-opacity-90 transition-all"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setIsPlayingVideo(false);
+                                            }}
+                                        >
+                                            Back to poster
+                                        </button>
                                     </div>
                                 )}
                             </div>
-                            <ExternalLink className="h-4 w-4 text-gray-400" />
-                        </a>
-                    ) : (
-                        <div className="flex items-center gap-3">
-                            {/* Brand image */}
-                            {asset.brand?.imageUrl && (
-                                <img
-                                    src={asset.brand.imageUrl}
-                                    alt={asset.brand.name}
-                                    className="w-10 h-10 rounded-full object-cover"
-                                />
+                        ) : (
+                            <img
+                                src={getImageUrl(primaryFile)}
+                                alt={asset.headline || 'Ad creative'}
+                                className="w-full h-auto"
+                                style={{
+                                    maxHeight: 'none',
+                                    height: 'auto',
+                                    width: '100%',
+                                    display: 'block'
+                                }}
+                            />
+                        )}
+                        {/* Show video indicator or file count */}
+                        <div className="absolute top-2 right-2 flex gap-2">
+                            {isVideo && !isPlayingVideo && (
+                                <div className="bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
+                                    <Play className="h-3 w-3" fill="currentColor" />
+                                    Video
+                                </div>
                             )}
-                            {/* Brand name */}
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold text-gray-900 truncate">
-                                    {asset.brand?.name || asset.brandName}
+                            {asset.files.length > 1 && (
+                                <div className="bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
+                                    +{asset.files.length - 1}
                                 </div>
-                            </div>
+                            )}
                         </div>
-                    )}
-                </div>
-            )}
-
-            {/* 5. Media (Image or Video) */}
-            <div className="aspect-square bg-gray-100 relative">
-                {primaryFile ? (
-                    <>
-                        <img
-                            src={primaryFile.thumbnailUrl || primaryFile.url}
-                            alt={asset.headline || 'Ad creative'}
-                            className="w-full h-full object-cover"
-                        />
-                        {isVideo && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="bg-black bg-opacity-50 rounded-full p-3">
-                                    <Play className="h-6 w-6 text-white" fill="currentColor" />
-                                </div>
-                            </div>
-                        )}
-                        {asset.files.length > 1 && (
-                            <div className="absolute top-2 right-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
-                                +{asset.files.length - 1}
-                            </div>
-                        )}
                     </>
                 ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
+                    <div className="w-full h-48 flex items-center justify-center text-gray-400">
                         No media
                     </div>
                 )}
@@ -189,27 +231,119 @@ export function AdCard({ asset }: AdCardProps) {
             {/* 6. Ad Description (Text) */}
             <div className="p-4">
                 {asset.adText && (
-                    <div className="text-sm text-gray-700 mb-3 leading-relaxed">
-                        {truncateText(asset.adText, 120)}
+                    <div className="text-sm text-gray-700 mb-3 leading-relaxed whitespace-pre-wrap">
+                        {asset.adText}
                     </div>
                 )}
 
-                {/* 7. CTA Title and Link */}
-                {asset.cta && (
+                {/* Date of Running */}
+                {getDateDisplay() && (
                     <div className="mb-3">
-                        {asset.ctaUrl ? (
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Calendar className="h-4 w-4" />
+                            <span>{getDateDisplay()}</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Platforms */}
+                {asset.platforms && asset.platforms.length > 0 && (
+                    <div className="mb-3">
+                        <div className="flex flex-wrap gap-1">
+                            {asset.platforms.map((platform) => (
+                                <span
+                                    key={platform}
+                                    className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                                >
+                                    {platform}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Brand Name and Image (linking to FB Ad Library) */}
+                {(asset.brand || asset.brandName) && (
+                    <div className="mb-3">
+                        {brandAdLibraryUrl ? (
                             <a
-                                href={asset.ctaUrl}
+                                href={brandAdLibraryUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                                className="flex items-center gap-3 hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
                             >
-                                {asset.cta}
-                                <ExternalLink className="h-4 w-4" />
+                                {/* Brand image */}
+                                {(asset.brand?.imageUrl || asset.brandImageUrl) && (
+                                    <img
+                                        src={asset.brand?.imageUrl || asset.brandImageUrl || ''}
+                                        alt={asset.brand?.name || asset.brandName || ''}
+                                        className="w-10 h-10 rounded-full object-cover"
+                                    />
+                                )}
+                                {/* Brand name and page ID */}
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-gray-900 truncate">
+                                        {asset.brand?.name || asset.brandName}
+                                    </div>
+                                    {(asset.brand?.fbPageId || asset.fbPageId) && (
+                                        <div className="text-xs text-gray-500">
+                                            Page ID: {asset.brand?.fbPageId || asset.fbPageId}
+                                        </div>
+                                    )}
+                                </div>
+                                <ExternalLink className="h-4 w-4 text-gray-400" />
                             </a>
                         ) : (
-                            <div className="inline-flex items-center bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium">
-                                {asset.cta}
+                            <div className="flex items-center gap-3">
+                                {/* Brand image */}
+                                {(asset.brand?.imageUrl || asset.brandImageUrl) && (
+                                    <img
+                                        src={asset.brand?.imageUrl || asset.brandImageUrl || ''}
+                                        alt={asset.brand?.name || asset.brandName || ''}
+                                        className="w-10 h-10 rounded-full object-cover"
+                                    />
+                                )}
+                                {/* Brand name */}
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-gray-900 truncate">
+                                        {asset.brand?.name || asset.brandName}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* 7. CTA Analysis */}
+                {(asset.cta || asset.ctaType || asset.ctaUrl) && (
+                    <div className="mb-3 space-y-2">
+                        {asset.cta && (
+                            <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CTA Title</span>
+                                <div className="text-sm text-gray-800 font-medium">{asset.cta}</div>
+                            </div>
+                        )}
+
+                        {asset.ctaType && (
+                            <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CTA Type</span>
+                                <div className="text-sm text-blue-600 font-medium">{asset.ctaType}</div>
+                            </div>
+                        )}
+
+                        {asset.ctaUrl && (
+                            <div>
+                                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">CTA URL</span>
+                                <div>
+                                    <a
+                                        href={asset.ctaUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-sm text-blue-600 hover:text-blue-800 underline break-all"
+                                    >
+                                        {asset.ctaUrl}
+                                    </a>
+                                </div>
                             </div>
                         )}
                     </div>

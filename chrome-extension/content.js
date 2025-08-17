@@ -117,6 +117,9 @@ class AdBoardSaver {
 
             this.isInitialized = true
             console.log('✅ AdBoard: Pre-loading completed')
+
+            // Update any existing buttons that are stuck in loading state
+            this.updateAllSaveButtons()
         } catch (error) {
             console.error('❌ AdBoard: Pre-loading failed:', error)
 
@@ -132,6 +135,7 @@ class AdBoardSaver {
             } else {
                 this.sessionValid = false
                 this.isInitialized = true
+                this.updateAllSaveButtons()
             }
         }
     }
@@ -284,6 +288,9 @@ class AdBoardSaver {
         this.sessionValid = false
         this.isInitialized = true
 
+        // Update existing buttons to show the error state
+        this.updateAllSaveButtons()
+
         // Show a message to the user
         this.showExtensionError()
     }
@@ -296,6 +303,9 @@ class AdBoardSaver {
         this.extensionFailed = true
         this.sessionValid = false
         this.isInitialized = true
+
+        // Update existing buttons to show the reload state
+        this.updateAllSaveButtons()
 
         // Show specific message about extension reload
         this.showExtensionReloadMessage()
@@ -944,6 +954,30 @@ class AdBoardSaver {
         const hasSponsored = text.includes('Sponsored')
         const hasSeeAdDetails = text.includes('See ad details')
 
+        // Helper function to get higher quality brand image URL
+        const getHighQualityBrandImageUrl = (url) => {
+            if (!url || !url.includes('fbcdn')) return url
+
+            try {
+                // Remove size constraints from Facebook CDN URLs
+                // Replace _s60x60, _s40x40, etc. with larger sizes
+                let improvedUrl = url
+                    .replace(/_s\d+x\d+/g, '_s400x400') // Upgrade to 400x400
+                    .replace(/stp=dst-jpg_s\d+x\d+/g, 'stp=dst-jpg_s400x400') // Upgrade stp parameter
+
+                // Validate the URL still looks correct
+                if (improvedUrl.includes('fbcdn') && improvedUrl.includes('_s400x400')) {
+                    return improvedUrl
+                }
+
+                // Fallback to original if transformation seems wrong
+                return url
+            } catch (error) {
+                console.warn('Error improving brand image URL:', error)
+                return url
+            }
+        }
+
         // Extract brand image URL (next to brand name)
         let brandImageUrl = ''
 
@@ -952,7 +986,7 @@ class AdBoardSaver {
         if (brandName) {
             const brandImage = container.querySelector(`img[alt="${brandName}"]`)
             if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
-                brandImageUrl = brandImage.src
+                brandImageUrl = getHighQualityBrandImageUrl(brandImage.src)
                 // Found brand image
             }
         }
@@ -969,7 +1003,7 @@ class AdBoardSaver {
                 const brandImages = container.querySelectorAll(selector)
                 for (const brandImage of brandImages) {
                     if (brandImage && brandImage.src && brandImage.src.includes('fbcdn')) {
-                        brandImageUrl = brandImage.src
+                        brandImageUrl = getHighQualityBrandImageUrl(brandImage.src)
                         // Found brand image by size
                         break
                     }
@@ -1099,6 +1133,7 @@ class AdBoardSaver {
 
         // Extract CTA (Call-to-Action) link
         let cta = ''
+        let ctaType = ''
         let ctaUrl = ''
 
         // Strategy: Look specifically for the main CTA button/link in the ad
@@ -1126,7 +1161,33 @@ class AdBoardSaver {
 
             for (const link of ctaLinks) {
                 const href = link.href
-                const text = link.textContent?.trim()
+
+                // Try to get more precise text - prefer direct text content over nested elements
+                let text = ''
+
+                // First, try to get text from direct text nodes or specific button/span elements
+                const directTextNodes = []
+                for (const child of link.childNodes) {
+                    if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
+                        directTextNodes.push(child.textContent.trim())
+                    }
+                }
+
+                // If we have direct text nodes, use those
+                if (directTextNodes.length > 0) {
+                    text = directTextNodes.join(' ').trim()
+                } else {
+                    // Look for specific CTA-like elements within the link
+                    const ctaTextElement = link.querySelector('span, div[class*="button"], div[role="button"]')
+                    if (ctaTextElement) {
+                        text = ctaTextElement.textContent?.trim() || ''
+                    } else {
+                        // Fallback to link text content, but limit length to avoid grabbing too much
+                        const fullText = link.textContent?.trim() || ''
+                        // Limit to reasonable CTA length
+                        text = fullText.length > 50 ? fullText.substring(0, 50).trim() : fullText
+                    }
+                }
 
                 // Skip obvious system links and metadata, but be more lenient
                 if (href &&
@@ -1153,7 +1214,10 @@ class AdBoardSaver {
 
                     // Accept if it has CTA keywords OR if it's a non-empty text with reasonable length
                     if (hasCtaKeyword || (text && text.length > 0 && text.length <= 50)) {
-                        cta = text
+                        // Parse CTA to separate text and type
+                        const ctaData = this.parseCtaText(text)
+                        cta = ctaData.text
+                        ctaType = ctaData.type
                         ctaUrl = cleanUrl
                         break
                     }
@@ -1182,6 +1246,7 @@ class AdBoardSaver {
             dateRange,
             platforms,
             cta,
+            ctaType,
             ctaUrl
         }
 
@@ -1200,6 +1265,7 @@ class AdBoardSaver {
             headline: adText.substring(0, 100) + (adText.length > 100 ? '...' : ''),
             mediaDetails: mediaUrls,
             cta,
+            ctaType,
             ctaUrl,
             fbAdId: libraryId, // Keep for backward compatibility
             firstSeenDate: new Date().toISOString(),
@@ -1279,6 +1345,9 @@ class AdBoardSaver {
         const saveButton = document.createElement('button')
         saveButton.className = 'adboard-save-btn'
 
+        // Store adCard data on the button for later reference
+        saveButton.adCardData = adCard
+
         // Set initial state based on session and boards availability
         if (!this.isInitialized) {
             // Show loading state while initializing
@@ -1341,6 +1410,86 @@ class AdBoardSaver {
         }
 
         return saveButton
+    }
+
+    // Update all existing save buttons to reflect current state
+    updateAllSaveButtons() {
+        const existingButtons = document.querySelectorAll('.adboard-save-btn')
+        console.log(`🔄 AdBoard: Updating ${existingButtons.length} existing save buttons`)
+
+        existingButtons.forEach(button => {
+            // Reset button state
+            button.disabled = false
+            button.style.cursor = 'pointer'
+            button.style.backgroundColor = '#1877f2'
+
+            if (!this.isInitialized) {
+                // Still loading
+                button.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                    Loading...
+                `
+                button.disabled = true
+                button.style.cursor = 'not-allowed'
+                button.style.backgroundColor = '#ccc'
+            } else if (this.extensionFailed) {
+                // Extension failed - show error
+                button.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h2v-2h-2v2zm0-4h2V7h-2v6z"/>
+                    </svg>
+                    Extension Error
+                `
+                button.disabled = true
+                button.style.cursor = 'not-allowed'
+                button.style.backgroundColor = '#dc3545'
+            } else if (!this.sessionValid) {
+                // Session invalid - show login required
+                button.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/>
+                    </svg>
+                    Login Required
+                `
+                button.disabled = true
+                button.style.cursor = 'not-allowed'
+                button.style.backgroundColor = '#ccc'
+            } else {
+                // Ready to use
+                button.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                    </svg>
+                    Add to AdBoard
+                `
+                button.disabled = false
+                button.style.cursor = 'pointer'
+                button.style.backgroundColor = '#1877f2'
+
+                // Clear existing event listeners and re-add them
+                const newButton = button.cloneNode(true)
+                button.parentNode?.replaceChild(newButton, button)
+
+                // Re-add event listeners for hover effects and click handler
+                newButton.addEventListener('mouseenter', () => {
+                    newButton.style.backgroundColor = '#166fe5'
+                })
+                newButton.addEventListener('mouseleave', () => {
+                    newButton.style.backgroundColor = '#1877f2'
+                })
+
+                // Re-add click handler if we have adCard data
+                if (newButton.adCardData) {
+                    newButton.addEventListener('click', (e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        this.showMultiBoardDialog(newButton.adCardData)
+                    })
+                }
+            }
+        })
     }
 
     async showMultiBoardDialog(adCard) {
@@ -1406,6 +1555,12 @@ class AdBoardSaver {
 
     renderBoardsDialog(dialog, adCard, boards) {
         dialog.innerHTML = `
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
             <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600;">Save to Multiple Boards</h3>
             <div style="margin-bottom: 16px;">
                 <strong>${adCard.brandName}</strong>
@@ -1444,9 +1599,32 @@ class AdBoardSaver {
                 return
             }
 
-            // Save to all boards in one API call
-            await this.saveAdToMultipleBoards(adCard, selectedBoardIds)
-            dialog.closest('div[style*="position: fixed"]').remove()
+            // Show loading state on the button
+            const saveBtn = dialog.querySelector('#saveBtn')
+            const originalText = saveBtn.innerHTML
+            saveBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="animation: spin 1s linear infinite; margin-right: 8px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                Saving...
+            `
+            saveBtn.disabled = true
+            saveBtn.style.opacity = '0.7'
+            saveBtn.style.cursor = 'not-allowed'
+
+            try {
+                // Save to all boards in one API call
+                await this.saveAdToMultipleBoards(adCard, selectedBoardIds)
+                dialog.closest('div[style*="position: fixed"]').remove()
+            } catch (error) {
+                // Reset button state on error
+                saveBtn.innerHTML = originalText
+                saveBtn.disabled = false
+                saveBtn.style.opacity = '1'
+                saveBtn.style.cursor = 'pointer'
+                console.error('❌ Error saving ad:', error)
+                alert('Failed to save ad. Please try again.')
+            }
         })
     }
 
@@ -1523,6 +1701,7 @@ class AdBoardSaver {
                     headline: adCard.adText ? adCard.adText.substring(0, 100) : '',
                     mediaDetails: adCard.mediaDetails,
                     cta: adCard.cta || '',
+                    ctaType: adCard.ctaType || '',
                     ctaUrl: adCard.ctaUrl || '',
                     firstSeenDate: new Date().toISOString(),
                     lastSeenDate: new Date().toISOString(),
@@ -1569,6 +1748,7 @@ class AdBoardSaver {
                     headline: adCard.adText ? adCard.adText.substring(0, 100) : '',
                     mediaDetails: adCard.mediaDetails,
                     cta: adCard.cta || '',
+                    ctaType: adCard.ctaType || '',
                     ctaUrl: adCard.ctaUrl || '',
                     firstSeenDate: new Date().toISOString(),
                     lastSeenDate: new Date().toISOString(),
@@ -1689,6 +1869,120 @@ class AdBoardSaver {
         const union = new Set([...words1, ...words2])
 
         return intersection.size / union.size
+    }
+
+    // Parse CTA text to separate content from button type
+    parseCtaText(text) {
+        if (!text) return { text: '', type: '' }
+
+        // Clean up common problematic patterns first
+        let cleanText = text
+
+        // Remove domain patterns that often get mixed in
+        cleanText = cleanText.replace(/[A-Z0-9]+\.(COM|NET|ORG|IO|CO|UK|CA|AU)/gi, '').trim()
+
+        // Remove www patterns
+        cleanText = cleanText.replace(/www\.[a-zA-Z0-9.-]+/gi, '').trim()
+
+        // Remove standalone brand names that appear before CTA
+        // Pattern: "BrandNameLearn more" -> "Learn more"
+        cleanText = cleanText.replace(/([A-Z][a-z]+)([A-Z][a-z]+\s+(More|Now|Today|Here|Info))/g, '$2').trim()
+
+        // Pattern: "BRANDNAME.COMBrandLearn more" -> "Learn more"
+        cleanText = cleanText.replace(/[A-Z0-9]+\.[A-Z]+[A-Z][a-z]+([A-Z][a-z]+\s+[A-Z][a-z]+)/g, '$1').trim()
+
+        // Remove common website/social patterns
+        cleanText = cleanText.replace(/(Visit our website|Follow us|Like us|Join us)/gi, '').trim()
+
+        // Clean up repeated capitalized words (often brand names)
+        cleanText = cleanText.replace(/([A-Z][a-z]+)\1+/g, '$1').trim()
+
+        // Remove extra spaces and normalize
+        cleanText = cleanText.replace(/\s+/g, ' ').trim()
+
+        // If the cleaned text is too short or empty, keep more of the original
+        if (cleanText.length < 3 && text.length > cleanText.length) {
+            // Try a less aggressive cleaning
+            cleanText = text.replace(/[A-Z0-9]+\.(COM|NET|ORG)/gi, '').replace(/\s+/g, ' ').trim()
+        }
+
+        // Comprehensive list of Facebook CTA button types
+        const ctaTypes = [
+            // Action CTAs
+            'Shop Now', 'Buy Now', 'Order Now', 'Purchase', 'Add to Cart',
+            'Book Now', 'Reserve', 'Schedule', 'Appointment',
+
+            // Information CTAs  
+            'Learn More', 'See More', 'Read More', 'Find Out More', 'Discover',
+            'Get Info', 'Request Info', 'Get Details', 'View Details',
+
+            // Engagement CTAs
+            'Sign Up', 'Register', 'Join', 'Join Now', 'Subscribe', 'Follow',
+            'Get Started', 'Start Now', 'Begin', 'Try Now', 'Try Free',
+
+            // Download/Install CTAs
+            'Download', 'Install', 'Get App', 'Download App', 'Install App',
+            'Get it on Google Play', 'Download on App Store',
+
+            // Communication CTAs
+            'Contact Us', 'Call Now', 'Message', 'Send Message', 'Chat',
+            'Get Quote', 'Request Quote', 'Inquire',
+
+            // Website CTAs
+            'Visit Website', 'Visit Site', 'Go to Website', 'Website',
+            'View Website', 'See Website',
+
+            // Media CTAs
+            'Watch Now', 'Watch Video', 'Play Now', 'Listen', 'View',
+            'See Photos', 'Watch', 'Play',
+
+            // Application CTAs
+            'Apply Now', 'Apply', 'Submit', 'Donate', 'Donate Now',
+            'Get Directions', 'Find Location', 'Locate',
+
+            // Generic action words that might be CTAs
+            'Continue', 'Next', 'Submit', 'Send', 'Go'
+        ]
+
+        // Find if any CTA type exists in the cleaned text (case-insensitive)
+        for (const type of ctaTypes) {
+            const lowerCleanText = cleanText.toLowerCase()
+            const lowerType = type.toLowerCase()
+            const typeIndex = lowerCleanText.lastIndexOf(lowerType)
+            if (typeIndex !== -1) {
+                // Extract the CTA text (everything before the type)
+                const ctaText = cleanText.substring(0, typeIndex).trim()
+                return {
+                    text: ctaText,
+                    type: type // Return the properly capitalized version
+                }
+            }
+        }
+
+        // If no specific CTA type found, treat the cleaned text as CTA
+        // but try to identify if it ends with common action words
+        const actionWords = ['now', 'today', 'here', 'more']
+        const words = cleanText.split(' ')
+        const lastWord = words[words.length - 1]?.toLowerCase()
+
+        if (actionWords.includes(lastWord) && words.length > 1) {
+            // Likely that the last word is part of a CTA type
+            const possibleType = words.slice(-2).join(' ')
+            const possibleText = words.slice(0, -2).join(' ')
+
+            if (possibleText.length > 0) {
+                return {
+                    text: possibleText,
+                    type: possibleType
+                }
+            }
+        }
+
+        // Default: return the cleaned text as CTA with no specific type
+        return {
+            text: cleanText || text, // Use cleaned text if available, fallback to original
+            type: ''
+        }
     }
 
     // Wait for extension to be fully ready with retries
